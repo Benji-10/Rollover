@@ -1121,6 +1121,24 @@ export default function Planner() {
     });
   }, [view, isMobile]);
 
+  /* Scroll blocker for the floating-create gesture. Tracked in one ref with
+     one removal function so it can never leak; the blocker also self-disarms
+     (checks a live floating create) so even a missed removal can't kill
+     scrolling. */
+  const touchBlockRef = useRef(null);
+  const clearTouchBlock = useCallback(() => {
+    if (touchBlockRef.current) {
+      window.removeEventListener("touchmove", touchBlockRef.current);
+      touchBlockRef.current = null;
+    }
+  }, []);
+  const armTouchBlock = useCallback(() => {
+    clearTouchBlock();
+    const fn = (te) => { if (dragRef.current && dragRef.current.floating) te.preventDefault(); };
+    touchBlockRef.current = fn;
+    window.addEventListener("touchmove", fn, { passive: false });
+  }, [clearTouchBlock]);
+
   /* one day at a time — used by side-scroll/swipe so days snap along */
   const stepDay = useCallback((dir) => {
     lastDirRef.current = dir;
@@ -1266,8 +1284,7 @@ export default function Planner() {
         if (navigator.vibrate) navigator.vibrate(15);
         /* stop the browser claiming the gesture for scrolling — a claimed
            gesture fires pointercancel, which used to pop the editor early */
-        st.blockTouch = (te) => te.preventDefault();
-        window.addEventListener("touchmove", st.blockTouch, { passive: false });
+        armTouchBlock();
         placeFloating(st.lx, st.ly);
       }, 400);
     }
@@ -1316,10 +1333,8 @@ export default function Planner() {
     };
     const cleanup = () => {
       const cur = dragRef.current;
-      if (cur) {
-        clearInterval(cur.edgeTimer);
-        if (cur.blockTouch) window.removeEventListener("touchmove", cur.blockTouch);
-      }
+      if (cur) clearInterval(cur.edgeTimer);
+      clearTouchBlock();
       dragRef.current = null;
       setCreatePreview(null);
       window.removeEventListener("pointermove", move);
@@ -1330,7 +1345,7 @@ export default function Planner() {
     window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", abort);
-  }, [stepDay]);
+  }, [stepDay, armTouchBlock, clearTouchBlock]);
 
   const unionWindows = useCallback((key) => {
     const wins = categories.map((c) => windowFor(c, key)).filter(Boolean);
@@ -1360,7 +1375,13 @@ export default function Planner() {
         g.anchorMinute = ((scrollRef.current.scrollTop + centerY) / g.startHourH) * 60;
         g.anchorOffsetY = centerY;
       }
-      if (dragRef.current) { dragRef.current = null; setCreatePreview(null); setDragPreview(null); } /* cancel single-finger drag/create */
+      if (dragRef.current) {
+        clearInterval(dragRef.current.edgeTimer);
+        dragRef.current = null;
+        clearTouchBlock(); /* the leak: a live blocker with no owner froze all scrolling */
+        setCreatePreview(null);
+        setDragPreview(null);
+      } /* cancel single-finger drag/create */
     } else if (g.pts.size === 1) {
       g.swipeX0 = e.clientX; g.swipeY0 = e.clientY; g.swipeAxis = null;
     }
@@ -1415,7 +1436,7 @@ export default function Planner() {
     window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
-  }, [zoomView, stepDay]);
+  }, [zoomView, stepDay, clearTouchBlock]);
 
   /* desktop wheel: ctrl/cmd+scroll zooms (anchored at the cursor),
      plain horizontal scroll (trackpad / shift+wheel) pages the days along */
