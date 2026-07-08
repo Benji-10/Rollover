@@ -45,13 +45,21 @@ export function expandOccurrences(events, startKey, endKey, displayTz) {
   for (const ev of events) {
     if (ev.date > scanEnd) continue;
     const repeating = ev.repeat && ev.repeat !== "none";
-    const from = ev.date > scanStart ? ev.date : scanStart;
+    /* multi-day all-day events span date..endDate; scan back far enough to
+       catch spans that started before the visible range */
+    const span = ev.allDay && ev.endDate ? Math.max(0, diffDaysKey(ev.endDate, ev.date)) : 0;
+    const scanFrom = span ? addDaysKey(scanStart, -span) : scanStart;
+    const from = ev.date > scanFrom ? ev.date : scanFrom;
     const to = repeating ? (ev.repeatUntil && ev.repeatUntil < scanEnd ? ev.repeatUntil : scanEnd) : ev.date;
     for (let k = from; k <= to; k = addDaysKey(k, 1)) {
       if (!matchesRule(ev, k)) continue;
       if (ev.exceptions && ev.exceptions.includes(k)) continue;
       if (ev.allDay) {
-        if (k >= startKey && k <= endKey) out.push({ ev, occDate: k, allDay: true, dispDate: k, renderKey: ev.id + "_" + k });
+        for (let si = 0; si <= span; si++) {
+          const dk = si === 0 ? k : addDaysKey(k, si);
+          if (dk < startKey || dk > endKey) continue;
+          out.push({ ev, occDate: k, allDay: true, dispDate: dk, renderKey: ev.id + "_" + k + "_" + si, spanStart: si === 0, spanEnd: si === span });
+        }
         continue;
       }
       const startUtc = wallToUtc(k, ev.start, ev.tz);

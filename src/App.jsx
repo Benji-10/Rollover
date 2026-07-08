@@ -16,6 +16,16 @@ const HOUR_H_MAX = 160;
 const AXIS_W = 56;
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
+/* map sync failures to what the person can actually do about them */
+function explainSyncError(err) {
+  const m = String(err?.message || err);
+  if (m.includes("404")) return "Sync endpoint not found (404). Serverless functions aren't deployed — Netlify Drop only ships static files, so use a Git-connected deploy (or `netlify deploy`) for accounts to work.";
+  if (m.includes("500")) return "Server error (500). Most likely DATABASE_URL isn't set: Netlify → Site configuration → Environment variables → add DATABASE_URL with your Neon connection string, then redeploy.";
+  if (m.includes("401")) return "Not authorised (401). Sign out and back in; if it persists, check Identity is enabled in Netlify (Site configuration → Identity).";
+  if (m.toLowerCase().includes("fetch") || m.toLowerCase().includes("network")) return "Network error reaching the sync endpoint. Check your connection, or the site may still be deploying.";
+  return `Sync error: ${m}`;
+}
+
 /* ---------- theme ---------- */
 const THEMES = {
   light: {
@@ -60,7 +70,7 @@ function migrate(d) {
     out.categories = cats;
   }
   out.tasks = out.tasks.map((t) => ({ category: "work", scheduledAt: null, autoReschedule: true, completedSlot: null, ...t }));
-  out.events = out.events.map((e) => ({ tz: deviceTz, repeat: "none", allDay: false, exceptions: [], location: null, ...e }));
+  out.events = out.events.map((e) => ({ tz: deviceTz, repeat: "none", allDay: false, endDate: null, exceptions: [], location: null, ...e }));
   out.holidayCals = d.holidayCals || [];
   out.holidayCache = d.holidayCache || {};
   out.country = d.country || guessCountry();
@@ -146,6 +156,7 @@ function ItemModal({ draft, events, categories, onSaveEvent, onSaveTask, onDelet
   const [start, setStart] = useState(draft.start ?? 540);
   const [end, setEnd] = useState(draft.end ?? 600);
   const [allDay, setAllDay] = useState(!!draft.allDay);
+  const [endDate, setEndDate] = useState(draft.endDate || draft.date || dateKey(new Date()));
   const [tz, setTz] = useState(draft.tz || deviceTz);
   const [tzFromLocation, setTzFromLocation] = useState(false);
   const [repeat, setRepeat] = useState(draft.repeat || "none");
@@ -247,6 +258,7 @@ function ItemModal({ draft, events, categories, onSaveEvent, onSaveTask, onDelet
       onSaveEvent({
         exceptions: [], createdAt: Date.now(), ...draft,
         id: draft.id || uid(), title: title.trim(), date, allDay,
+        endDate: allDay && endDate > date ? endDate : null,
         start: timedStart, end: timedEnd,
         tz, color, location, repeat,
         repeatUntil: repeat !== "none" && repeatUntil ? repeatUntil : null,
@@ -313,7 +325,8 @@ function ItemModal({ draft, events, categories, onSaveEvent, onSaveTask, onDelet
         {itemType === "event" ? (
           <>
             <Row label="All-day"><Switch on={allDay} onToggle={() => setAllDay(!allDay)} label="Toggle all-day" /></Row>
-            <Row label="Date"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-md px-2 py-1 text-sm" style={selStyle(T)} /></Row>
+            <Row label={allDay ? "Starts" : "Date"}><input type="date" value={date} onChange={(e) => { setDate(e.target.value); if (endDate < e.target.value) setEndDate(e.target.value); }} className="rounded-md px-2 py-1 text-sm" style={selStyle(T)} /></Row>
+            {allDay && <Row label="Ends"><input type="date" value={endDate} min={date} onChange={(e) => setEndDate(e.target.value < date ? date : e.target.value)} className="rounded-md px-2 py-1 text-sm" style={selStyle(T)} /></Row>}
             {!allDay && (
               <>
                 <Row label="Starts"><TimeSelect value={start} onChange={(v) => { setStart(v); if (end <= v) setEnd(Math.min(v + 60, 1440)); }} /></Row>
@@ -599,8 +612,44 @@ function GhostBlock({ preview, hourH }) {
   );
 }
 
+/* ---------- iOS-style week strip (mobile) ---------- */
+function WeekStrip({ anchor, now, visibleN, onPickDay, onSwipeWeek }) {
+  const T = useT();
+  const ws = startOfWeek(anchor);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
+  const selStart = dateKey(anchor);
+  const selEnd = dateKey(addDays(anchor, visibleN - 1));
+  const x0 = useRef(null);
+  return (
+    <div className="flex px-1 pt-1 border-b select-none" style={{ borderColor: T.border, touchAction: "pan-x" }}
+      onPointerDown={(e) => { x0.current = { x: e.clientX, id: e.pointerId }; }}
+      onPointerUp={(e) => {
+        if (x0.current && x0.current.id === e.pointerId) {
+          const dx = e.clientX - x0.current.x;
+          if (Math.abs(dx) > 45) onSwipeWeek(dx < 0 ? 1 : -1);
+        }
+        x0.current = null;
+      }}>
+      {days.map((d) => {
+        const k = dateKey(d);
+        const isToday = sameDay(d, now);
+        const sel = k >= selStart && k <= selEnd;
+        return (
+          <button key={k} onClick={() => onPickDay(d)} className="flex-1 flex flex-col items-center gap-0.5 pb-1">
+            <span className="text-[9px] font-semibold" style={{ color: T.dim }}>{DOW[d.getDay()][0]}</span>
+            <span className="text-xs font-semibold rounded-full flex items-center justify-center"
+              style={{ width: 26, height: 26, background: isToday ? T.danger : sel ? (T.mode === "dark" ? "#3a3a3e" : "#e4e4e9") : "transparent", color: isToday ? "white" : T.text }}>
+              {d.getDate()}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ---------- time grid (week/day) ---------- */
-function TimeGrid({ days, now, nowMin, hourH, allDayByDay, timedByDay, tasksByDay, layoutFor, unionWindows, scrollRef, gridBodyRef, gutter, dragPreview, createPreview, beginDrag, beginCreate, onGridPointerDown, openEvent, openTask, toggleTask, openMaps, transition }) {
+function TimeGrid({ days, now, nowMin, hourH, isMobile, allDayByDay, timedByDay, tasksByDay, layoutFor, unionWindows, scrollRef, gridBodyRef, gutter, dragPreview, createPreview, beginDrag, beginCreate, onGridPointerDown, openEvent, openTask, toggleTask, openMaps, transition }) {
   const T = useT();
   const nowTop = (nowMin / 60) * hourH;
   return (
@@ -610,6 +659,14 @@ function TimeGrid({ days, now, nowMin, hourH, allDayByDay, timedByDay, tasksByDa
           <div style={{ width: AXIS_W }} />
           {days.map((d) => {
             const isToday = sameDay(d, now);
+            if (isMobile) {
+              return (
+                <div key={dateKey(d)} className="flex-1 text-center py-1.5 text-[11px] font-semibold truncate"
+                  style={{ color: isToday ? T.danger : T.text }}>
+                  {DOW[d.getDay()]} {d.getDate()} {MONTHS[d.getMonth()].slice(0, 3)}
+                </div>
+              );
+            }
             return (
               <div key={dateKey(d)} className="flex-1 text-center pt-1.5">
                 <div className="text-[10px] uppercase tracking-wide" style={{ color: T.dim }}>{DOW[d.getDay()]}</div>
@@ -667,7 +724,7 @@ function TimeGrid({ days, now, nowMin, hourH, allDayByDay, timedByDay, tasksByDa
                 ))}
                 {dragPreview && dragPreview.dispDate === key && <GhostBlock preview={dragPreview} hourH={hourH} />}
                 {createPreview && createPreview.date === key && (
-                  <div className="absolute left-0.5 right-1 rounded-lg pointer-events-none" style={{ top: (createPreview.start / 60) * hourH, height: ((createPreview.end - createPreview.start) / 60) * hourH, background: colorSet("blue", T.mode).bg, border: `1.5px dashed ${T.accent}`, zIndex: 15 }}>
+                  <div className="absolute left-0.5 right-1 rounded-lg pointer-events-none" style={{ top: (createPreview.start / 60) * hourH, height: ((createPreview.end - createPreview.start) / 60) * hourH, background: colorSet("blue", T.mode).bg, border: `1.5px ${createPreview.floating ? "solid" : "dashed"} ${T.accent}`, boxShadow: createPreview.floating ? T.shadow : "none", zIndex: 15 }}>
                     <div className="text-[10px] px-1.5 pt-0.5 font-medium" style={{ color: colorSet("blue", T.mode).text }}>{toAmPm(createPreview.start)} – {toAmPm(createPreview.end)}</div>
                   </div>
                 )}
@@ -786,6 +843,7 @@ export default function Planner() {
   const [showHolidays, setShowHolidays] = useState(false);
   const [quickTitle, setQuickTitle] = useState("");
   const [saveState, setSaveState] = useState("idle");
+  const [syncErr, setSyncErr] = useState("");
   const [dragPreview, setDragPreview] = useState(null);
   const [createPreview, setCreatePreview] = useState(null);
   const [hourH, setHourH] = useState(HOUR_H_BASE);
@@ -841,7 +899,7 @@ export default function Planner() {
             saveData(user, m).catch(() => {});
           }
         }
-      } catch { setSaveState("error"); }
+      } catch (err) { setSaveState("error"); setSyncErr(explainSyncError(err)); }
       skipNextSave.current = true;
       setLoaded(true);
     })();
@@ -858,7 +916,7 @@ export default function Planner() {
         await saveData(user, { tasks, events, categories, holidayCals, holidayCache, country });
         setSaveState("saved");
         setTimeout(() => setSaveState("idle"), 1500);
-      } catch { setSaveState("error"); }
+      } catch (err) { setSaveState("error"); setSyncErr(explainSyncError(err)); }
     }, 500);
     return () => clearTimeout(saveTimer.current);
   }, [tasks, events, categories, holidayCals, holidayCache, country, loaded, user]);
@@ -1026,10 +1084,31 @@ export default function Planner() {
   }, []);
 
   const visibleN = view === "day" ? 1 : isMobile ? 3 : 7;
+  const anchorKeyRef = useRef(dateKey(anchor));
+  anchorKeyRef.current = dateKey(anchor);
+  const visNRef = useRef(visibleN);
+  visNRef.current = visibleN;
   const days = useMemo(() => {
     if (view === "month") return [];
     return Array.from({ length: visibleN }, (_, i) => addDays(anchor, i));
   }, [view, anchor, visibleN]);
+
+  const shift = useCallback((dir) => {
+    lastDirRef.current = dir;
+    setAnchor((a) => {
+      if (view === "month") { const d = new Date(a); d.setMonth(d.getMonth() + dir); return d; }
+      return addDays(a, dir * (view === "week" ? (isMobile ? 3 : 7) : 1));
+    });
+  }, [view, isMobile]);
+
+  /* one day at a time — used by side-scroll/swipe so days snap along */
+  const stepDay = useCallback((dir) => {
+    lastDirRef.current = dir;
+    setAnchor((a) => {
+      if (view === "month") { const d = new Date(a); d.setMonth(d.getMonth() + dir); return d; }
+      return addDays(a, dir);
+    });
+  }, [view]);
 
   /* ---------- drag / resize existing blocks ---------- */
   const beginDrag = useCallback((e, target, mode) => {
@@ -1132,16 +1211,60 @@ export default function Planner() {
     const rect = e.currentTarget.getBoundingClientRect();
     const yToMin = (clientY) => Math.max(0, Math.min(1440, Math.round(((clientY - rect.top) / hourHRef.current) * 60 / 15) * 15));
     const anchorMin = yToMin(e.clientY);
-    const st = { create: true, key, anchorMin, x0: e.clientX, y0: e.clientY, active: !isTouch, moved: false, timer: null, last: anchorMin };
-    if (isTouch) st.timer = setTimeout(() => { st.active = true; if (navigator.vibrate) navigator.vibrate(15); }, 400);
+    const st = { create: true, key, anchorMin, x0: e.clientX, y0: e.clientY, lx: e.clientX, ly: e.clientY, active: !isTouch, moved: false, timer: null, last: anchorMin, edgeTimer: null };
+
+    /* geometry of the whole grid so a floating touch block can cross days */
+    const grid = gridBodyRef.current ? gridBodyRef.current.getBoundingClientRect() : rect;
+    const colW = () => (grid.width - AXIS_W) / visNRef.current;
+    const placeFloating = (x, y) => {
+      const col = Math.min(visNRef.current - 1, Math.max(0, Math.floor((x - grid.left - AXIS_W) / colW())));
+      const date = addDaysKey(anchorKeyRef.current, col);
+      let start = Math.round((((y - grid.top) / hourHRef.current) * 60 - 30) / 15) * 15;
+      start = Math.max(0, Math.min(1380, start));
+      st.pv = { date, start, end: start + 60 };
+      setCreatePreview({ ...st.pv, floating: true });
+    };
+    const setEdge = (dir) => {
+      if (st.edgeDir === dir) return;
+      clearInterval(st.edgeTimer);
+      st.edgeDir = dir;
+      if (dir) {
+        st.edgeTimer = setInterval(() => {
+          stepDay(dir);
+          /* re-place under the (possibly stationary) finger once the window rolls */
+          requestAnimationFrame(() => placeFloating(st.lx, st.ly));
+        }, 480);
+      }
+    };
+
+    if (isTouch) {
+      /* iOS-style: hold to spawn a 1-hour block under the finger, then drag
+         it anywhere — holding at the left/right edge rolls to other days */
+      st.timer = setTimeout(() => {
+        st.active = true;
+        st.floating = true;
+        if (navigator.vibrate) navigator.vibrate(15);
+        placeFloating(st.x0, st.y0);
+      }, 400);
+    }
     dragRef.current = st;
 
     const move = (ev) => {
       const s = dragRef.current;
       if (!s || !s.create) return;
+      s.lx = ev.clientX; s.ly = ev.clientY;
       const dx = ev.clientX - s.x0, dy = ev.clientY - s.y0;
       if (!s.active) { if (Math.hypot(dx, dy) > 10) { clearTimeout(s.timer); cleanup(); } return; }
       ev.preventDefault();
+      if (s.floating) {
+        placeFloating(ev.clientX, ev.clientY);
+        const EDGE = 28;
+        if (ev.clientX < grid.left + AXIS_W + EDGE) setEdge(-1);
+        else if (ev.clientX > grid.right - EDGE) setEdge(1);
+        else setEdge(0);
+        return;
+      }
+      /* mouse: paint a time range in the pressed column */
       if (Math.abs(dy) > 6) s.moved = true;
       if (!s.moved) return;
       s.last = yToMin(ev.clientY);
@@ -1152,11 +1275,14 @@ export default function Planner() {
       const s = dragRef.current;
       if (s && s.create) {
         clearTimeout(s.timer);
+        clearInterval(s.edgeTimer);
         if (s.active) {
-          if (s.moved) {
+          if (s.floating && s.pv) {
+            setItemDraft({ itemType: "event", fromGrid: true, ...s.pv, color: "blue", tz: deviceTz });
+          } else if (s.moved) {
             const a = Math.min(s.anchorMin, s.last), b = Math.max(s.anchorMin, s.last);
             setItemDraft({ itemType: "event", fromGrid: true, date: key, start: a, end: Math.max(b, a + 15), color: "blue", tz: deviceTz });
-          } else {
+          } else if (!isTouch) {
             const m = Math.floor(s.anchorMin / 30) * 30;
             setItemDraft({ itemType: "event", fromGrid: true, date: key, start: m, end: Math.min(m + 60, 1440), color: "blue", tz: deviceTz });
           }
@@ -1165,6 +1291,8 @@ export default function Planner() {
       cleanup();
     };
     const cleanup = () => {
+      const s = dragRef.current;
+      if (s) clearInterval(s.edgeTimer);
       dragRef.current = null;
       setCreatePreview(null);
       window.removeEventListener("pointermove", move);
@@ -1174,30 +1302,13 @@ export default function Planner() {
     window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
-  }, []);
+  }, [stepDay]);
 
   const unionWindows = useCallback((key) => {
     const wins = categories.map((c) => windowFor(c, key)).filter(Boolean);
     if (!wins.length) return null;
     return { start: Math.min(...wins.map((w) => w.start)), end: Math.max(...wins.map((w) => w.end)) };
   }, [categories]);
-
-  const shift = useCallback((dir) => {
-    lastDirRef.current = dir;
-    setAnchor((a) => {
-      if (view === "month") { const d = new Date(a); d.setMonth(d.getMonth() + dir); return d; }
-      return addDays(a, dir * (view === "week" ? (isMobile ? 3 : 7) : 1));
-    });
-  }, [view, isMobile]);
-
-  /* one day at a time — used by side-scroll/swipe so days snap along */
-  const stepDay = useCallback((dir) => {
-    lastDirRef.current = dir;
-    setAnchor((a) => {
-      if (view === "month") { const d = new Date(a); d.setMonth(d.getMonth() + dir); return d; }
-      return addDays(a, dir);
-    });
-  }, [view]);
 
   /* ---------- multitouch: pinch to zoom (vertical, anchored at the pinch
      centre) / switch view (horizontal), plus horizontal swipe that snaps
@@ -1250,6 +1361,7 @@ export default function Planner() {
           else if (ratio > 1.6) { g.fired = true; zoomView(1); }   /* spread -> less detail */
         }
       } else if (g.pts.size === 1 && !g.pinching) {
+        if (dragRef.current && dragRef.current.active) return; /* a block drag / floating create owns this finger */
         const dx = ev.clientX - g.swipeX0, dy = ev.clientY - g.swipeY0;
         if (!g.swipeAxis && (Math.abs(dx) > 24 || Math.abs(dy) > 24)) g.swipeAxis = Math.abs(dx) > Math.abs(dy) * 1.4 ? "h" : "v";
         if (g.swipeAxis === "h") {
@@ -1345,7 +1457,7 @@ export default function Planner() {
 
   return (
     <ThemeCtx.Provider value={T}>
-      <style>{`.rl-hover:hover{background:${T.hover}} html{color-scheme:${mode}} ::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-thumb{background:${T.mode === "dark" ? "#3a3a3e" : "#c9c9ce"};border-radius:5px;border:2px solid ${T.surface}} ::-webkit-scrollbar-track{background:transparent} @keyframes rlFade{0%{opacity:0;transform:scale(0.985)}100%{opacity:1;transform:scale(1)}} .rl-fade{animation:rlFade 0.26s cubic-bezier(0.22,0.61,0.36,1)} @keyframes rlSlideL{0%{opacity:0.5;transform:translateX(26px)}100%{opacity:1;transform:none}} @keyframes rlSlideR{0%{opacity:0.5;transform:translateX(-26px)}100%{opacity:1;transform:none}} .rl-slide-l{animation:rlSlideL 0.22s ease-out} .rl-slide-r{animation:rlSlideR 0.22s ease-out} @media (prefers-reduced-motion: reduce){.rl-slide-l,.rl-slide-r{animation:none}} @media (prefers-reduced-motion: reduce){.rl-fade{animation:none}}`}</style>
+      <style>{`.rl-hover:hover{background:${T.hover}} html{color-scheme:${mode}} ::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-thumb{background:${T.mode === "dark" ? "#3a3a3e" : "#c9c9ce"};border-radius:5px;border:2px solid ${T.surface}} ::-webkit-scrollbar-track{background:transparent} @keyframes rlFade{0%{opacity:0;transform:scale(0.985)}100%{opacity:1;transform:scale(1)}} .rl-fade{animation:rlFade 0.26s cubic-bezier(0.22,0.61,0.36,1)} @keyframes rlSlideL{0%{opacity:0.5;transform:translateX(26px)}100%{opacity:1;transform:none}} @keyframes rlSlideR{0%{opacity:0.5;transform:translateX(-26px)}100%{opacity:1;transform:none}} .rl-slide-l{animation:rlSlideL 0.22s ease-out} .rl-slide-r{animation:rlSlideR 0.22s ease-out} @media (prefers-reduced-motion: reduce){.rl-slide-l,.rl-slide-r{animation:none}} @media (max-width:640px){input,select,textarea{font-size:16px !important}} *{-webkit-touch-callout:none} input,textarea{-webkit-user-select:text;user-select:text} @media (prefers-reduced-motion: reduce){.rl-fade{animation:none}}`}</style>
       <div className="h-screen flex select-none" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", background: T.bg, color: T.text, colorScheme: mode }}>
         {/* ---------- sidebar (drawer on mobile) ---------- */}
         {isMobile && drawerOpen && <div className="fixed inset-0 z-30" style={{ background: "rgba(0,0,0,0.45)" }} onClick={() => setDrawerOpen(false)} />}
@@ -1356,9 +1468,10 @@ export default function Planner() {
             <h2 className="font-bold text-lg flex items-center gap-1.5" style={{ color: T.text }}>
               <span aria-hidden="true" style={{ color: T.accent }}>↻</span>Rollover
             </h2>
-            <span className="text-[10px]" style={{ color: saveState === "error" ? T.danger : T.faint }}>
-              {saveState === "saving" ? (user ? "syncing…" : "saving…") : saveState === "saved" ? (user ? "synced" : "saved") : saveState === "error" ? "sync failed" : ""}
-            </span>
+            <button className="text-[10px] text-left" style={{ color: saveState === "error" ? T.danger : T.faint, cursor: saveState === "error" ? "pointer" : "default" }}
+              title={saveState === "error" ? syncErr : ""} onClick={() => { if (saveState === "error" && syncErr) alert(syncErr); }}>
+              {saveState === "saving" ? (user ? "syncing…" : "saving…") : saveState === "saved" ? (user ? "synced" : "saved") : saveState === "error" ? "sync failed — tap for details" : ""}
+            </button>
           </div>
 
           <div className="px-4 pb-3 flex gap-1.5">
@@ -1442,6 +1555,11 @@ export default function Planner() {
               className={`ml-1 rounded-lg text-white font-semibold text-xs ${isMobile ? "px-2.5 py-1.5" : "px-3 py-1.5"}`} style={{ background: T.accent }}>{isMobile ? "＋" : "＋ New"}</button>
           </div>
 
+          {isMobile && view !== "month" && (
+            <WeekStrip anchor={anchor} now={now} visibleN={visibleN}
+              onPickDay={(d) => { lastDirRef.current = d >= anchor ? 1 : -1; setAnchor(d); }}
+              onSwipeWeek={(dir) => { lastDirRef.current = dir; setAnchor((a) => addDays(a, dir * 7)); }} />
+          )}
           {view === "month" ? (
             <div key={`${anchor.getFullYear()}-${anchor.getMonth()}`} className={`flex-1 flex flex-col min-h-0 ${transition ? "rl-fade" : lastDirRef.current > 0 ? "rl-slide-l" : "rl-slide-r"}`}
               onPointerDown={onGridPointerDown} style={{ touchAction: "pan-y" }}>
@@ -1449,7 +1567,7 @@ export default function Planner() {
                 onOpenDay={(d) => { setAnchor(d); changeView("day"); }} />
             </div>
           ) : (
-            <TimeGrid days={days} now={now} nowMin={nowMin} hourH={hourH} allDayByDay={allDayByDay} timedByDay={timedByDay} tasksByDay={tasksByDay}
+            <TimeGrid days={days} now={now} nowMin={nowMin} hourH={hourH} isMobile={isMobile} allDayByDay={allDayByDay} timedByDay={timedByDay} tasksByDay={tasksByDay}
               layoutFor={layoutFor} unionWindows={unionWindows} scrollRef={scrollRef} gridBodyRef={gridBodyRef} gutter={gutter}
               dragPreview={dragPreview} createPreview={createPreview} beginDrag={beginDrag} beginCreate={beginCreate} onGridPointerDown={onGridPointerDown}
               openEvent={openEvent} openTask={openTask} toggleTask={toggleTask} openMaps={openMaps} transition={transition} />

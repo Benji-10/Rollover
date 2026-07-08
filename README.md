@@ -75,3 +75,25 @@ top of the queue on its own.
 On screens under 640px the task list becomes a slide-out drawer (top-left
 button, badge shows pending count) so the calendar gets the full width, and
 week view shows a rolling 3-day window instead of 7 days.
+
+## Mobile creation
+Hold on empty grid to spawn a 1-hour event block under your finger, drag it
+anywhere (hold at the left/right edge to roll onto other days/weeks), release
+to open the editor pre-filled. An iOS-style week strip sits above the day
+headers — tap a day to jump, swipe it to change weeks. Inputs are 16px on
+mobile + maximum-scale=1 so iOS doesn't zoom the page when a field focuses.
+
+## All-day events
+All-day events take a start AND end date, so trips/conferences span several
+days across the all-day row and the month grid. Timed hours are preserved
+when you toggle all-day off again.
+
+## Sync troubleshooting ("sync failed — tap for details")
+The error label now tells you which of these it is:
+1. 404 — functions aren't deployed. Netlify Drop only ships static files;
+   accounts REQUIRE a Git-connected deploy (or `netlify deploy` via CLI).
+2. 500 — DATABASE_URL missing. Netlify -> Site configuration ->
+   Environment variables -> add DATABASE_URL = your Neon connection string
+   (the pooler string from the Neon dashboard) -> trigger a redeploy.
+3. 401 — Identity issue. Enable Identity in Site configuration, sign out/in.
+NEVER commit the connection string to the repo — it stays in the env var.
