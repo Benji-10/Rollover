@@ -6,7 +6,11 @@ import netlifyIdentity from "netlify-identity-widget";
 
 export const STORE_KEY = "planner-data-v1";
 
-export function initIdentity(onChange) {
+export function initIdentity(onChange, onWidgetToggle) {
+  if (onWidgetToggle) {
+    netlifyIdentity.on("open", () => onWidgetToggle(true));
+    netlifyIdentity.on("close", () => onWidgetToggle(false));
+  }
   let settled = false;
   const settle = (u) => { settled = true; onChange(u); };
   netlifyIdentity.on("login", (u) => { settle(u); netlifyIdentity.close(); });
@@ -24,6 +28,7 @@ export function initIdentity(onChange) {
   setTimeout(() => { if (!settled) settle(netlifyIdentity.currentUser() || null); }, 2500);
 }
 export const openLogin = () => netlifyIdentity.open();
+export const closeLogin = () => netlifyIdentity.close();
 export const doLogout = () => netlifyIdentity.logout();
 
 async function bearer() {

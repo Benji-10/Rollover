@@ -7,7 +7,7 @@ import {
   wallToUtc, utcToWall, timeZoneList, tzLabel,
 } from "./time.js";
 import { expandOccurrences, scheduleTasks, windowFor, layoutDay, effectivePriority } from "./scheduler.js";
-import { initIdentity, openLogin, doLogout, loadData, saveData, STORE_KEY } from "./storage.js";
+import { initIdentity, openLogin, closeLogin, doLogout, loadData, saveData, STORE_KEY } from "./storage.js";
 import { HOLIDAY_CALENDARS, calByCode, guessCountry, fetchHolidays, yearsForRange } from "./holidays.js";
 
 const HOUR_H_BASE = 48;
@@ -15,6 +15,13 @@ const HOUR_H_MIN = 30;
 const HOUR_H_MAX = 84;
 const AXIS_W = 56;
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
+const ICON_VARIANTS = [
+  { id: "blue", c: "#0a84ff", glyph: "#ffffff" },
+  { id: "purple", c: "#bf5af2", glyph: "#ffffff" },
+  { id: "green", c: "#30d158", glyph: "#ffffff" },
+  { id: "graphite", c: "#1c1c1e", glyph: "#0a84ff" },
+];
 
 /* map sync failures to what the person can actually do about them */
 function explainSyncError(err) {
@@ -850,6 +857,19 @@ function MonthGrid({ anchor, now, allDayByDay, timedByDay, tasksByDay, onOpenDay
   );
 }
 
+/* ---------- settings row ---------- */
+function SettingsRow({ icon, label, right, danger, onClick }) {
+  const T = useT();
+  return (
+    <button onClick={onClick} className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium text-left rl-hover"
+      style={{ background: T.surface2, color: danger ? T.danger : T.text }}>
+      <span className="text-base leading-none w-5 text-center">{icon}</span>
+      <span className="flex-1 truncate">{label}</span>
+      <span className="text-xs" style={{ color: T.faint }}>{right ?? "›"}</span>
+    </button>
+  );
+}
+
 /* ---------- holidays picker ---------- */
 function HolidaysModal({ selected, country, onSave, onClose }) {
   const T = useT();
@@ -909,6 +929,8 @@ export default function Planner() {
   const [quickTitle, setQuickTitle] = useState("");
   const [saveState, setSaveState] = useState("idle");
   const [syncErr, setSyncErr] = useState("");
+  const [idWidgetOpen, setIdWidgetOpen] = useState(false);
+  const [appIcon, setAppIcon] = useState(() => { try { return localStorage.getItem("rollover-icon") || "blue"; } catch { return "blue"; } });
   const [dragPreview, setDragPreview] = useState(null);
   const [createPreview, setCreatePreview] = useState(null);
   const [hourH, setHourH] = useState(HOUR_H_BASE);
@@ -930,7 +952,7 @@ export default function Planner() {
   const viewRef = useRef("week");
 
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t); }, []);
-  useEffect(() => { initIdentity((u) => { setUser(u); setAuthReady(true); }); }, []);
+  useEffect(() => { initIdentity((u) => { setUser(u); setAuthReady(true); }, setIdWidgetOpen); }, []);
 
   /* measure the scrollbar gutter so the all-day header lines up with the grid */
   useEffect(() => {
@@ -997,6 +1019,29 @@ export default function Planner() {
       }
     });
   }, [view, loaded]);
+
+  /* Netlify Identity renders a full-screen iframe; on notched phones its own
+     close button hides under the status bar. Push the iframe below the safe
+     area and render our own always-reachable close button. */
+  useEffect(() => {
+    if (!idWidgetOpen) return;
+    const el = document.getElementById("netlify-identity-widget");
+    if (el) {
+      el.style.setProperty("top", "env(safe-area-inset-top)");
+      el.style.setProperty("height", "calc(100% - env(safe-area-inset-top))");
+    }
+  }, [idWidgetOpen]);
+
+  const pickAppIcon = useCallback((id) => {
+    setAppIcon(id);
+    try { localStorage.setItem("rollover-icon", id); } catch { /* private mode */ }
+    const man = document.getElementById("rl-manifest");
+    const apple = document.getElementById("rl-apple-icon");
+    const theme = document.getElementById("rl-theme");
+    if (man) man.href = `/manifest-${id}.webmanifest`;
+    if (apple) apple.href = `/icons/${id}-180.png`;
+    if (theme) theme.content = ICON_VARIANTS.find((v) => v.id === id)?.c || "#0a84ff";
+  }, []);
 
   /* keep the zoom origin (pinch centre / cursor) fixed while the scale changes */
   useLayoutEffect(() => {
@@ -1573,7 +1618,7 @@ export default function Planner() {
 
   return (
     <ThemeCtx.Provider value={T}>
-      <style>{`.rl-hover:hover{background:${T.hover}} html{color-scheme:${mode}} ::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-thumb{background:${T.mode === "dark" ? "#3a3a3e" : "#c9c9ce"};border-radius:5px;border:2px solid ${T.surface}} ::-webkit-scrollbar-track{background:transparent} @keyframes rlFade{0%{opacity:0;transform:scale(0.985)}100%{opacity:1;transform:scale(1)}} .rl-fade{animation:rlFade 0.26s cubic-bezier(0.22,0.61,0.36,1)} @keyframes rlSlideL{0%{opacity:0.5;transform:translateX(26px)}100%{opacity:1;transform:none}} @keyframes rlSlideR{0%{opacity:0.5;transform:translateX(-26px)}100%{opacity:1;transform:none}} .rl-slide-l{animation:rlSlideL 0.22s ease-out} .rl-slide-r{animation:rlSlideR 0.22s ease-out} @media (prefers-reduced-motion: reduce){.rl-slide-l,.rl-slide-r{animation:none}} @media (max-width:640px){input,select,textarea{font-size:16px !important}} @keyframes rlSheet{0%{transform:translateY(48px);opacity:0.55}100%{transform:none;opacity:1}} .rl-sheet{animation:rlSheet 0.24s cubic-bezier(0.22,0.61,0.36,1)} @media (prefers-reduced-motion: reduce){.rl-sheet{animation:none}} *{-webkit-touch-callout:none} input,textarea{-webkit-user-select:text;user-select:text} @media (prefers-reduced-motion: reduce){.rl-fade{animation:none}}`}</style>
+      <style>{`.rl-hover:hover{background:${T.hover}} button{cursor:pointer} button:disabled{cursor:not-allowed} select,input[type=date]{cursor:pointer} a{cursor:pointer} html{color-scheme:${mode}} ::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-thumb{background:${T.mode === "dark" ? "#3a3a3e" : "#c9c9ce"};border-radius:5px;border:2px solid ${T.surface}} ::-webkit-scrollbar-track{background:transparent} @keyframes rlFade{0%{opacity:0;transform:scale(0.985)}100%{opacity:1;transform:scale(1)}} .rl-fade{animation:rlFade 0.26s cubic-bezier(0.22,0.61,0.36,1)} @keyframes rlSlideL{0%{opacity:0.5;transform:translateX(26px)}100%{opacity:1;transform:none}} @keyframes rlSlideR{0%{opacity:0.5;transform:translateX(-26px)}100%{opacity:1;transform:none}} .rl-slide-l{animation:rlSlideL 0.22s ease-out} .rl-slide-r{animation:rlSlideR 0.22s ease-out} @media (prefers-reduced-motion: reduce){.rl-slide-l,.rl-slide-r{animation:none}} @media (max-width:640px){input,select,textarea{font-size:16px !important}} @keyframes rlSheet{0%{transform:translateY(48px);opacity:0.55}100%{transform:none;opacity:1}} .rl-sheet{animation:rlSheet 0.24s cubic-bezier(0.22,0.61,0.36,1)} @media (prefers-reduced-motion: reduce){.rl-sheet{animation:none}} *{-webkit-touch-callout:none} input,textarea{-webkit-user-select:text;user-select:text} @media (prefers-reduced-motion: reduce){.rl-fade{animation:none}}`}</style>
       <div className="app-h flex select-none" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", background: T.bg, color: T.text, colorScheme: mode, paddingTop: "env(safe-area-inset-top)" }}>
         {/* ---------- sidebar (drawer on mobile) ---------- */}
         {isMobile && drawerOpen && <div className="fixed inset-0 z-30" style={{ background: "rgba(0,0,0,0.45)" }} onClick={() => setDrawerOpen(false)} />}
@@ -1635,16 +1680,26 @@ export default function Planner() {
             )}
           </div>
 
-          <div className="px-4 py-3 border-t flex flex-col gap-1.5" style={{ borderColor: T.border }}>
-            <button onClick={() => setShowCats(true)} className="text-xs font-medium text-left" style={{ color: T.accent }}>⚙ Hours & categories</button>
-            <button onClick={() => setShowHolidays(true)} className="text-xs font-medium text-left" style={{ color: T.accent }}>🎌 Holiday calendars{holidayCals.length ? ` (${holidayCals.length})` : ""}</button>
-            {isMobile && <button onClick={() => setMode(mode === "dark" ? "light" : "dark")} className="text-xs font-medium text-left" style={{ color: T.accent }}>{mode === "dark" ? "☀ Light mode" : "☾ Dark mode"}</button>}
+          <div className="px-3 py-3 border-t flex flex-col gap-1.5" style={{ borderColor: T.border }}>
+            <SettingsRow icon="⚙" label="Hours & categories" onClick={() => setShowCats(true)} />
+            <SettingsRow icon="🎌" label="Holiday calendars" right={holidayCals.length ? String(holidayCals.length) : "›"} onClick={() => setShowHolidays(true)} />
+            {isMobile && <SettingsRow icon={mode === "dark" ? "☀" : "☾"} label={mode === "dark" ? "Light mode" : "Dark mode"} onClick={() => setMode(mode === "dark" ? "light" : "dark")} />}
             {user ? (
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] truncate" style={{ color: T.dim }}>{user.email}</span>
-                <button onClick={doLogout} className="text-xs font-medium" style={{ color: T.danger }}>Sign out</button>
-              </div>
-            ) : <button onClick={openLogin} className="text-xs font-medium text-left" style={{ color: T.accent }}>Sign in to sync across devices</button>}
+              <SettingsRow icon="👤" label={user.email} right="Sign out" danger onClick={doLogout} />
+            ) : (
+              <SettingsRow icon="👤" label="Sign in to sync across devices" onClick={openLogin} />
+            )}
+            <div className="flex items-center gap-2 px-1 pt-1.5">
+              <span className="text-[10px] uppercase tracking-wide flex-1" style={{ color: T.dim }}>App icon</span>
+              {ICON_VARIANTS.map((v) => (
+                <button key={v.id} onClick={() => pickAppIcon(v.id)} aria-label={`${v.id} icon`}
+                  className="rounded-lg flex items-center justify-center font-bold"
+                  style={{ width: 26, height: 26, background: v.c, color: v.glyph, fontSize: 14, outline: appIcon === v.id ? `2px solid ${T.accent}` : "none", outlineOffset: 2 }}>
+                  ↻
+                </button>
+              ))}
+            </div>
+            <span className="text-[9px] px-1" style={{ color: T.faint }}>Icon applies when you add Rollover to your home screen</span>
           </div>
         </div>
         )}
@@ -1697,6 +1752,13 @@ export default function Planner() {
             onSaveEvent={saveEvent} onSaveTask={saveTask}
             onDeleteSeries={deleteSeries} onDeleteOccurrence={deleteOccurrence} onDeleteTask={deleteTask}
             onClose={() => setItemDraft(null)} />
+        )}
+        {idWidgetOpen && (
+          <button onClick={closeLogin} aria-label="Close sign-in"
+            className="fixed rounded-full flex items-center justify-center text-white font-bold"
+            style={{ top: "calc(env(safe-area-inset-top) + 10px)", right: 12, width: 34, height: 34, background: "rgba(0,0,0,0.55)", zIndex: 2147483001, fontSize: 15 }}>
+            ✕
+          </button>
         )}
         {showCats && <CategoriesModal categories={categories} onSave={(cs) => { setCategories(cs); setShowCats(false); }} onClose={() => setShowCats(false)} />}
         {showHolidays && <HolidaysModal selected={holidayCals} country={country} onSave={(sel, c) => { setHolidayCals(sel); setCountry(c); setShowHolidays(false); }} onClose={() => setShowHolidays(false)} />}

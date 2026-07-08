@@ -124,3 +124,10 @@ icon.svg (favicon), icon-192/512.png + manifest.webmanifest (installable PWA,
 standalone display), apple-touch-icon.png (iOS home screen). The app locks to
 the dynamic viewport (100dvh) with safe-area padding, so no more page-level
 scrollbar behind the calendar on iPhone.
+
+## PWA & app icon
+Rollover installs as a PWA (Add to Home Screen). Pick from four app icons in
+the sidebar footer — the choice is applied to the manifest/apple-touch-icon
+immediately, but installed home-screen icons are fixed at install time (a web
+platform limit): re-add the app after changing it. No service worker is
+included on purpose, so deploys are never served stale from a cache.

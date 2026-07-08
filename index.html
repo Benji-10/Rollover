@@ -12,6 +12,23 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Rollover" />
     <title>Rollover</title>
+    <link id="rl-manifest" rel="manifest" href="/manifest-blue.webmanifest" />
+    <link id="rl-apple-icon" rel="apple-touch-icon" href="/icons/blue-180.png" />
+    <meta id="rl-theme" name="theme-color" content="#0a84ff" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Rollover" />
+    <script>
+      /* apply the chosen icon variant before install prompts read the manifest */
+      try {
+        var v = localStorage.getItem("rollover-icon") || "blue";
+        document.getElementById("rl-manifest").href = "/manifest-" + v + ".webmanifest";
+        document.getElementById("rl-apple-icon").href = "/icons/" + v + "-180.png";
+        var colors = { blue: "#0a84ff", purple: "#bf5af2", green: "#30d158", graphite: "#1c1c1e" };
+        document.getElementById("rl-theme").content = colors[v] || "#0a84ff";
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>
