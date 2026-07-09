@@ -8,7 +8,7 @@ import {
 } from "./time.js";
 import { expandOccurrences, scheduleTasks, windowFor, layoutDay, effectivePriority } from "./scheduler.js";
 import { initIdentity, openLogin, doLogout, loadData, saveData, STORE_KEY } from "./storage.js";
-import { HOLIDAY_CALENDARS, calByCode, guessCountry, fetchHolidays, yearsForRange } from "./holidays.js";
+import { HOLIDAY_CALENDARS, calByCode, guessCountry, holidayFeedUrl } from "./holidays.js";
 
 const HOUR_H_BASE = 48;
 const HOUR_H_MIN = 30;
@@ -1217,7 +1217,7 @@ function DetailPanel({ detail, closing, tasks, events, categories, schedule, wai
             )}
             {ev.timeOff && <InfoRow icon="umbrella">Time off — tasks are not scheduled on this day</InfoRow>}
             {ev.holiday && <InfoRow icon="flag">Public holiday (from your holiday calendar)</InfoRow>}
-            {ev.icsCal && <InfoRow icon="flag">From a subscribed calendar (read-only)</InfoRow>}
+            {ev.icsCal && !ev.holiday && <InfoRow icon="flag">From a subscribed calendar (read-only)</InfoRow>}
           </>
         )}
 
@@ -1551,47 +1551,20 @@ export default function Planner() {
     return { start: dateKey(anchor), end: dateKey(anchor) };
   }, [view, anchor, isMobile]);
 
-  /* fetch any holiday years we don't yet have cached for the visible range */
-  useEffect(() => {
-    if (!holidayCals.length) return;
-    const years = yearsForRange(range.start, range.end);
-    const missing = [];
-    for (const code of holidayCals) for (const y of years) if (!holidayCache[`${code}_${y}`]) missing.push([code, y]);
-    if (!missing.length) return;
-    let alive = true;
-    (async () => {
-      const adds = {};
-      for (const [code, y] of missing) {
-        try { adds[`${code}_${y}`] = await fetchHolidays(code, y); }
-        catch { adds[`${code}_${y}`] = []; }
-      }
-      if (alive) setHolidayCache((c) => ({ ...c, ...adds }));
-    })();
-    return () => { alive = false; };
-  }, [holidayCals, range, holidayCache]);
-
-  /* holiday events materialised as all-day events for the visible range */
-  const holidayEvents = useMemo(() => {
-    const out = [];
-    const years = yearsForRange(range.start, range.end);
-    for (const code of holidayCals) {
-      const cal = calByCode(code);
-      for (const y of years) {
-        for (const h of holidayCache[`${code}_${y}`] || []) {
-          if (h.date < range.start || h.date > range.end) continue;
-          out.push({ id: `hol_${code}_${h.date}`, title: h.name, date: h.date, start: 0, end: 1440, allDay: true, tz: cal?.tz || deviceTz, color: cal?.color || "red", repeat: "none", exceptions: [], location: null, holiday: true, holidayCountry: code });
-        }
-      }
-    }
-    return out;
-  }, [holidayCals, holidayCache, range]);
+  /* built-in country holidays are implicit ICS subscriptions (Google's
+     public holiday feeds -> traditional dates + explicit substitute days) */
+  const holidayFeeds = useMemo(() => holidayCals.map((code) => {
+    const c = calByCode(code);
+    return { id: `hol_${code}`, name: c?.name || code, url: holidayFeedUrl(code), color: c?.color || "red", enabled: true, holiday: true };
+  }), [holidayCals]);
+  const allFeeds = useMemo(() => [...holidayFeeds, ...icsCals], [holidayFeeds, icsCals]);
 
   /* subscribed ICS feeds: refresh stale ones (12h), persist the cache locally */
   useEffect(() => {
     if (!loaded) return;
     let dead = false;
     (async () => {
-      for (const cal of icsCals) {
+      for (const cal of allFeeds) {
         if (!cal.enabled) continue;
         const c = icsCache[cal.id];
         if (c && Date.now() - (c.fetched || 0) < 12 * 3600e3) continue;
@@ -1607,7 +1580,7 @@ export default function Planner() {
       }
     })();
     return () => { dead = true; };
-  }, [icsCals, loaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allFeeds, loaded]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     try { localStorage.setItem("rollover-ics-cache-v1", JSON.stringify(icsCache)); } catch { /* quota */ }
   }, [icsCache]);
@@ -1618,7 +1591,7 @@ export default function Planner() {
     const out = [];
     const p2 = (n) => String(n).padStart(2, "0");
     const y0 = +range.start.slice(0, 4), y1 = +range.end.slice(0, 4);
-    for (const cal of icsCals) {
+    for (const cal of allFeeds) {
       if (!cal.enabled) continue;
       const c = icsCache[cal.id];
       if (!c || !c.events) continue;
@@ -1626,7 +1599,7 @@ export default function Planner() {
         const mk = (date, endDate, suffix = "") => out.push({
           id: `ics_${cal.id}_${e.uid}${suffix}`, title: e.title, date, endDate,
           allDay: e.allDay, start: e.start, end: e.end, tz: deviceTz, repeat: "none",
-          exceptions: [], location: null, color: cal.color, icsCal: cal.id, notes: "", checklist: [],
+          exceptions: [], location: null, color: cal.color, icsCal: cal.id, holiday: !!cal.holiday, notes: "", checklist: [],
         });
         if (e.yearly) {
           for (let y = y0; y <= y1; y++) {
@@ -1639,7 +1612,7 @@ export default function Planner() {
       }
     }
     return out;
-  }, [icsCals, icsCache, range]);
+  }, [allFeeds, icsCache, range]);
 
   /* events on a hidden personal calendar stay out of view (still block scheduling) */
   const disabledCals = useMemo(() => new Set(userCals.filter((c) => !c.enabled).map((c) => c.id)), [userCals]);
@@ -1650,10 +1623,9 @@ export default function Planner() {
 
   const occurrences = useMemo(() => {
     const evOcc = expandOccurrences(visibleEvents, range.start, range.end, deviceTz);
-    const holOcc = holidayEvents.map((ev) => ({ ev, occDate: ev.date, allDay: true, dispDate: ev.date, renderKey: ev.id }));
     const icsOcc = expandOccurrences(icsEvents, range.start, range.end, deviceTz);
-    return [...evOcc, ...holOcc, ...icsOcc];
-  }, [visibleEvents, range, holidayEvents, icsEvents]);
+    return [...evOcc, ...icsOcc];
+  }, [visibleEvents, range, icsEvents]);
   const schedule = useMemo(() => scheduleTasks(tasks, events, categories, now, deviceTz, waiting), [tasks, events, categories, now, waiting]);
 
   const timedByDay = useMemo(() => {

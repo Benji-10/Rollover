@@ -1,6 +1,9 @@
-/* Holiday calendars via Nager.Date (free, no key, public-domain data).
-   We fetch per country+year on demand and cache in the data blob so it
-   works offline afterwards and counts toward the user's synced state. */
+/* Built-in holiday calendars are Google's public holiday ICS feeds — the
+   same curated style Apple uses, so they show the traditional dates (e.g.
+   Battle of the Boyne on 12 July, Independence Day on 4 July) with explicit
+   "(substitute day)"/"(observed)" entries, rather than only the shifted
+   bank-holiday dates that holiday APIs like Nager report. Fetched through
+   the ICS pipeline like any other subscription. */
 
 export const HOLIDAY_CALENDARS = [
   { code: "US", name: "United States", tz: "America/New_York", color: "red" },
@@ -36,19 +39,14 @@ export function guessCountry() {
   return byRegion[region] || "US";
 }
 
-export async function fetchHolidays(code, year) {
-  const r = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/${code}`);
-  if (!r.ok) throw new Error(`holiday fetch failed (${r.status})`);
-  const rows = await r.json();
-  return rows.map((h) => ({ date: h.date, name: h.localName, en: h.name }));
-}
+const GOOGLE_TOKENS = {
+  US: "usa", GB: "uk", JP: "japanese", CN: "china", KR: "south_korea",
+  HK: "hong_kong", TW: "taiwan", SG: "singapore", AU: "australian",
+  CA: "canadian", DE: "german", FR: "french", IN: "indian", IT: "italian",
+  ES: "spain", MX: "mexican", BR: "brazilian", NL: "dutch",
+};
 
-/* Which years we need to have cached to cover a visible range (plus a
-   little padding), so month-scrolling near a year boundary stays populated. */
-export function yearsForRange(startKey, endKey) {
-  const y0 = +startKey.slice(0, 4) - 1;
-  const y1 = +endKey.slice(0, 4) + 1;
-  const out = [];
-  for (let y = y0; y <= y1; y++) out.push(y);
-  return out;
+export function holidayFeedUrl(code) {
+  const token = GOOGLE_TOKENS[code] || "usa";
+  return `https://calendar.google.com/calendar/ical/en.${token}%23holiday%40group.v.calendar.google.com/public/basic.ics`;
 }
