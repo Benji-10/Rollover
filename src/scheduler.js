@@ -84,7 +84,7 @@ export function windowFor(cat, key) {
   return cat.hours[dowOfKey(key)] || null;
 }
 
-export function scheduleTasks(tasks, events, categories, now, displayTz) {
+export function scheduleTasks(tasks, events, categories, now, displayTz, waiting = []) {
   const HORIZON = 28;
   const gran = 15;
   const snapUp = (m) => Math.ceil(m / gran) * gran;
@@ -110,8 +110,18 @@ export function scheduleTasks(tasks, events, categories, now, displayTz) {
   /* Pass 1 — tasks with a user-chosen time stay put while the slot is
      still ahead, or forever if auto-reschedule is off. Only a missed
      slot with auto-reschedule on falls through to the auto pass. */
+  /* Waiting-list gate: a task tied to an unresolved waiting item stays off
+     the calendar entirely (no slot, pinned or not) until the item is
+     checked off; its dependents cascade into the same held state. */
+  const wById = {};
+  for (const w of waiting) wById[w.id] = w;
+  const waitingBlocked = new Set(
+    tasks.filter((t) => !t.done && t.waitingOn && wById[t.waitingOn] && !wById[t.waitingOn].done).map((t) => t.id)
+  );
+
   const autoQueue = [];
   for (const t of tasks.filter((x) => !x.done)) {
+    if (waitingBlocked.has(t.id)) continue;
     const s = t.scheduledAt;
     if (s) {
       const end = s.start + t.duration;
@@ -179,7 +189,7 @@ export function scheduleTasks(tasks, events, categories, now, displayTz) {
     return false;
   };
 
-  const failed = new Set();
+  const failed = new Set(waitingBlocked);
   const remaining = new Set(autoQueue.map((t) => t.id));
   const resolved = (d) => !!placed[d] || failed.has(d);
   while (remaining.size) {

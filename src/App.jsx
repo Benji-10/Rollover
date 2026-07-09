@@ -7,7 +7,7 @@ import {
   wallToUtc, utcToWall, timeZoneList, tzLabel,
 } from "./time.js";
 import { expandOccurrences, scheduleTasks, windowFor, layoutDay, effectivePriority } from "./scheduler.js";
-import { initIdentity, openLogin, closeLogin, doLogout, loadData, saveData, STORE_KEY } from "./storage.js";
+import { initIdentity, openLogin, doLogout, loadData, saveData, STORE_KEY } from "./storage.js";
 import { HOLIDAY_CALENDARS, calByCode, guessCountry, fetchHolidays, yearsForRange } from "./holidays.js";
 
 const HOUR_H_BASE = 48;
@@ -16,12 +16,29 @@ const HOUR_H_MAX = 84;
 const AXIS_W = 56;
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
-const ICON_VARIANTS = [
-  { id: "blue", c: "#0a84ff", glyph: "#ffffff" },
-  { id: "purple", c: "#bf5af2", glyph: "#ffffff" },
-  { id: "green", c: "#30d158", glyph: "#ffffff" },
-  { id: "graphite", c: "#1c1c1e", glyph: "#0a84ff" },
-];
+/* ---------- inline SVG icons (no emoji) ---------- */
+const ICONS = {
+  sliders: <><line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2.1" /><line x1="4" y1="12" x2="20" y2="12" /><circle cx="15" cy="12" r="2.1" /><line x1="4" y1="18" x2="20" y2="18" /><circle cx="8" cy="18" r="2.1" /></>,
+  flag: <><path d="M5 21V4" /><path d="M5 4h12l-2.5 4L17 12H5" /></>,
+  user: <><circle cx="12" cy="8" r="3.6" /><path d="M4.5 20c1-4 4.5-5.5 7.5-5.5s6.5 1.5 7.5 5.5" /></>,
+  sun: <><circle cx="12" cy="12" r="4" /><line x1="12" y1="2.5" x2="12" y2="5" /><line x1="12" y1="19" x2="12" y2="21.5" /><line x1="2.5" y1="12" x2="5" y2="12" /><line x1="19" y1="12" x2="21.5" y2="12" /><line x1="5.2" y1="5.2" x2="6.9" y2="6.9" /><line x1="17.1" y1="17.1" x2="18.8" y2="18.8" /><line x1="18.8" y1="5.2" x2="17.1" y2="6.9" /><line x1="5.2" y1="18.8" x2="6.9" y2="17.1" /></>,
+  moon: <path d="M20.5 13.5A8.5 8.5 0 1 1 10.5 3.5a7 7 0 0 0 10 10z" />,
+  mapPin: <><path d="M12 21c-3.5-3.4-6-6.7-6-9.8a6 6 0 1 1 12 0c0 3.1-2.5 6.4-6 9.8z" /><circle cx="12" cy="11" r="2.2" /></>,
+  pushpin: <><path d="M9 4h6l-.6 5 2.6 3H7l2.6-3z" /><line x1="12" y1="12" x2="12" y2="19" /></>,
+  link: <><path d="M9.5 14.5l5-5" /><path d="M11.2 7.2l1.6-1.6a3.7 3.7 0 0 1 5.6 5.6l-1.6 1.6" /><path d="M12.8 16.8l-1.6 1.6a3.7 3.7 0 0 1-5.6-5.6l1.6-1.6" /></>,
+  clock: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5l3.5 2" /></>,
+  chart: <><line x1="5" y1="20" x2="5" y2="12" /><line x1="11" y1="20" x2="11" y2="5" /><line x1="17" y1="20" x2="17" y2="9" /><line x1="2.5" y1="20" x2="19.5" y2="20" /></>,
+  menu: <><line x1="4" y1="6.5" x2="20" y2="6.5" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="17.5" x2="20" y2="17.5" /></>,
+  umbrella: <><path d="M12 3a8.5 8.5 0 0 1 8.5 8.5H3.5A8.5 8.5 0 0 1 12 3z" /><path d="M12 11.5V18a2 2 0 0 0 4 0" /></>,
+};
+function Icon({ name, size = 16, color = "currentColor", sw = 1.8, style }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={sw}
+      strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, ...style }} aria-hidden="true">
+      {ICONS[name]}
+    </svg>
+  );
+}
 
 /* map sync failures to what the person can actually do about them */
 function explainSyncError(err) {
@@ -76,8 +93,9 @@ function migrate(d) {
     }
     out.categories = cats;
   }
-  out.tasks = out.tasks.map((t) => ({ category: "work", scheduledAt: null, autoReschedule: true, completedSlot: null, dependsOn: null, ...t }));
-  out.events = out.events.map((e) => ({ tz: deviceTz, repeat: "none", allDay: false, endDate: null, timeOff: false, exceptions: [], location: null, ...e }));
+  out.tasks = out.tasks.map((t) => ({ category: "work", scheduledAt: null, autoReschedule: true, completedSlot: null, dependsOn: null, waitingOn: null, notes: "", checklist: [], ...t }));
+  out.events = out.events.map((e) => ({ tz: deviceTz, repeat: "none", allDay: false, endDate: null, timeOff: false, exceptions: [], location: null, notes: "", checklist: [], ...e }));
+  out.waiting = d.waiting || [];
   out.holidayCals = d.holidayCals || [];
   out.holidayCache = d.holidayCache || {};
   out.country = d.country || guessCountry();
@@ -160,7 +178,7 @@ const inputStyle = (T) => ({ background: T.input, color: T.text, border: "1px so
 const selStyle = (T) => ({ background: T.surface2, color: T.text, border: `1px solid ${T.border}` });
 
 /* ---------- unified event / task editor ---------- */
-function ItemModal({ draft, events, tasks = [], categories, onSaveEvent, onSaveTask, onDeleteSeries, onDeleteOccurrence, onDeleteTask, onClose }) {
+function ItemModal({ draft, events, tasks = [], waiting = [], categories, onSaveEvent, onSaveTask, onDeleteSeries, onDeleteOccurrence, onDeleteTask, onClose }) {
   const T = useT();
   const isNew = !draft.id;
   const [itemType, setItemType] = useState(draft.itemType || "event");
@@ -195,6 +213,16 @@ function ItemModal({ draft, events, tasks = [], categories, onSaveEvent, onSaveT
   const [taskStart, setTaskStart] = useState(draft.scheduledAt?.start ?? draft.start ?? 540);
   const [autoReschedule, setAutoReschedule] = useState(draft.autoReschedule !== false);
   const [dependsOn, setDependsOn] = useState(draft.dependsOn || "");
+  const [waitingFor, setWaitingFor] = useState(draft.waitingOn || "");
+  const [notes, setNotes] = useState(draft.notes || "");
+  const [checklist, setChecklist] = useState(() => (draft.checklist || []).map((c) => ({ ...c })));
+  const [newCheck, setNewCheck] = useState("");
+  const addCheck = () => {
+    if (!newCheck.trim()) return;
+    setChecklist((cs) => [...cs, { id: uid(), text: newCheck.trim(), done: false }]);
+    setNewCheck("");
+  };
+  const noteLinks = useMemo(() => (notes.match(/https?:\/\/[^\s]+/g) || []).slice(0, 4), [notes]);
 
   /* prerequisite choices: other pending tasks, excluding anything that
      (transitively) depends on this task — picking those would make a cycle */
@@ -291,6 +319,7 @@ function ItemModal({ draft, events, tasks = [], categories, onSaveEvent, onSaveT
         date, endDate: endDate > date ? endDate : date,
         allDay: true, timeOff: true, start: 0, end: 1440,
         tz: deviceTz, color: "red", repeat: "none", repeatUntil: null, location: null,
+        notes, checklist,
       });
       return;
     }
@@ -306,6 +335,7 @@ function ItemModal({ draft, events, tasks = [], categories, onSaveEvent, onSaveT
         start: timedStart, end: timedEnd,
         tz, color, location, repeat,
         repeatUntil: repeat !== "none" && repeatUntil ? repeatUntil : null,
+        notes, checklist,
       });
     } else {
       onSaveTask({
@@ -315,6 +345,8 @@ function ItemModal({ draft, events, tasks = [], categories, onSaveEvent, onSaveT
         scheduledAt: pickTime ? { date: taskDate, start: taskStart } : null,
         autoReschedule,
         dependsOn: dependsOn || null,
+        waitingOn: waitingFor || null,
+        notes, checklist,
       });
     }
   };
@@ -407,7 +439,7 @@ function ItemModal({ draft, events, tasks = [], categories, onSaveEvent, onSaveT
                 {location ? (
                   <div className="flex items-center gap-2">
                     <a href={`https://www.google.com/maps/search/?api=1&query=${location.lat},${location.lon}`} target="_blank" rel="noreferrer"
-                      className="flex-1 truncate text-sm font-medium" style={{ color: T.accent }} title="Open in Google Maps">📍 {location.name}</a>
+                      className="flex-1 truncate text-sm font-medium inline-flex items-center gap-1" style={{ color: T.accent }} title="Open in Google Maps"><Icon name="mapPin" size={13} sw={2} />{location.name}</a>
                     <button onClick={() => setLocation(null)} className="text-xs px-1" style={{ color: T.dim }}>✕</button>
                   </div>
                 ) : (
@@ -468,6 +500,15 @@ function ItemModal({ draft, events, tasks = [], categories, onSaveEvent, onSaveT
                 {dependsOn && <span className="text-[10px]" style={{ color: T.dim }}>won't be scheduled until that task's slot ends</span>}
               </div>
             </Row>
+            <Row label="Waiting for">
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <select value={waitingFor} onChange={(e) => setWaitingFor(e.target.value)} className="rounded-md px-2 py-1 text-sm max-w-full" style={{ ...selStyle(T), maxWidth: 220 }}>
+                  <option value="">— nothing —</option>
+                  {waiting.filter((w) => !w.done || w.id === waitingFor).map((w) => <option key={w.id} value={w.id}>{w.title}</option>)}
+                </select>
+                {waitingFor && <span className="text-[10px]" style={{ color: T.dim }}>hidden from the calendar until this is checked off</span>}
+              </div>
+            </Row>
             <Row label="When">
               <div className="flex flex-col gap-1.5">
                 <div className="flex gap-1.5">
@@ -491,6 +532,47 @@ function ItemModal({ draft, events, tasks = [], categories, onSaveEvent, onSaveT
             <Row label="Deadline"><input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} className="rounded-md px-2 py-1 text-sm" style={selStyle(T)} /></Row>
           </>
         )}
+
+        {/* notes + checklist apply to every item type */}
+        <div className="flex items-start gap-2">
+          <span className="text-xs flex-shrink-0 pt-1.5" style={{ color: T.dim, width: 62 }}>Notes</span>
+          <div className="flex-1 min-w-0">
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+              placeholder="Links, details… (e.g. the recipe URL)"
+              className="w-full rounded-lg px-3 py-2 text-sm resize-y" style={inputStyle(T)} />
+            {noteLinks.length > 0 && (
+              <div className="flex gap-1.5 flex-wrap mt-1">
+                {noteLinks.map((u, i) => {
+                  let host = u;
+                  try { host = new URL(u).hostname.replace(/^www\./, ""); } catch { /* keep raw */ }
+                  return (
+                    <a key={i} href={u} target="_blank" rel="noreferrer" className="rounded-full px-2 py-0.5 text-[10px] font-medium inline-flex items-center gap-1"
+                      style={{ background: T.surface2, color: T.accent }}>
+                      <Icon name="link" size={9} sw={2.2} />{host}
+                    </a>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex items-start gap-2">
+          <span className="text-xs flex-shrink-0 pt-1.5" style={{ color: T.dim, width: 62 }}>Checklist</span>
+          <div className="flex-1 min-w-0 flex flex-col gap-1">
+            {checklist.map((c) => (
+              <div key={c.id} className="flex items-center gap-2">
+                <Check checked={c.done} onToggle={() => setChecklist((cs) => cs.map((x) => (x.id === c.id ? { ...x, done: !x.done } : x)))} color={T.ok} />
+                <span className={`flex-1 text-sm truncate ${c.done ? "line-through" : ""}`} style={{ color: c.done ? T.faint : T.text }}>{c.text}</span>
+                <button onClick={() => setChecklist((cs) => cs.filter((x) => x.id !== c.id))} className="text-xs px-1" style={{ color: T.faint }} aria-label="Remove item">✕</button>
+              </div>
+            ))}
+            <div className="flex gap-1.5">
+              <input value={newCheck} onChange={(e) => setNewCheck(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addCheck()}
+                placeholder="Add item…" className="flex-1 rounded-lg px-3 py-1.5 text-sm min-w-0" style={inputStyle(T)} />
+              <button onClick={addCheck} className="rounded-lg text-white font-bold text-sm px-2.5" style={{ background: T.accent }}>＋</button>
+            </div>
+          </div>
+        </div>
       </div>
     </Modal>
   );
@@ -610,7 +692,8 @@ function EventBlock({ occ, lay, hourH, dragPreview, beginDrag, openEvent, openMa
         )}
         {g.height >= 64 && occ.ev.location && (
           <div className="text-[10px] truncate pointer-events-auto cursor-pointer" style={{ color: c.text, opacity: 0.7 }}
-            onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); openMaps(occ.ev.location); }}>📍 {occ.ev.location.name}</div>
+            onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); openMaps(occ.ev.location); }}>
+            <span className="inline-flex items-center gap-0.5"><Icon name="mapPin" size={9} color={c.text} sw={2.2} />{occ.ev.location.name}</span></div>
         )}
       </div>
       <div className="absolute left-0 right-0 top-0 h-2 opacity-0 group-hover/ev:opacity-100 cursor-row-resize flex justify-center"
@@ -644,8 +727,10 @@ function TaskBlock({ item, lay, hourH, dragPreview, beginDrag, openTask, toggleT
       <div className="flex items-start gap-1 px-1 py-0.5">
         <div className="mt-0.5"><Check checked={done} onToggle={() => toggleTask(t.id)} color={c.border} /></div>
         <div className="min-w-0 pointer-events-none">
-          <div className={`text-xs font-semibold truncate ${done ? "line-through" : ""}`} style={{ color: c.text, lineHeight: compact ? "1.1" : "1.3" }}>
-            {!done && item.pinned ? "📌 " : ""}{!done && item.chained ? "⛓ " : ""}{t.title}
+          <div className={`text-xs font-semibold flex items-center gap-1 min-w-0 ${done ? "line-through" : ""}`} style={{ color: c.text, lineHeight: compact ? "1.1" : "1.3" }}>
+            {!done && item.pinned && <Icon name="pushpin" size={10} color={c.text} sw={2} />}
+            {!done && item.chained && <Icon name="link" size={10} color={c.text} sw={2} />}
+            <span className="truncate">{t.title}</span>
           </div>
           {g.height >= 40 && <div className="text-[10px] truncate" style={{ color: c.text, opacity: 0.7 }}>{toAmPm(item.start)} – {toAmPm(item.end)}{overdue ? " · overdue" : ""}</div>}
         </div>
@@ -756,7 +841,7 @@ function TimeGrid({ days, now, nowMin, hourH, isMobile, allDayByDay, timedByDay,
               <div key={key} className="flex-1 px-0.5 pb-1 flex flex-col gap-0.5 border-l overflow-hidden" style={{ borderColor: T.gridLine }}>
                 {(allDayByDay[key] || []).map((o) => (
                   <button key={o.renderKey} onClick={() => openEvent(o)} className="rounded px-1.5 text-left text-[10px] font-semibold truncate text-white"
-                    style={{ background: ACCENTS[o.ev.color] || ACCENTS.blue }}>{o.ev.timeOff ? "🏖 " : o.ev.holiday ? "🎌 " : ""}{o.ev.title}</button>
+                    style={{ background: ACCENTS[o.ev.color] || ACCENTS.blue }}><span className="inline-flex items-center gap-1 max-w-full">{o.ev.timeOff ? <Icon name="umbrella" size={9} color="white" sw={2.4} /> : o.ev.holiday ? <Icon name="flag" size={9} color="white" sw={2.4} /> : null}<span className="truncate">{o.ev.title}</span></span></button>
                 ))}
               </div>
             );
@@ -842,7 +927,7 @@ function MonthGrid({ anchor, now, allDayByDay, timedByDay, tasksByDay, onOpenDay
               <div className="text-xs font-medium inline-flex items-center justify-center rounded-full mb-0.5"
                 style={{ width: 20, height: 20, background: isToday ? T.danger : "transparent", color: isToday ? "white" : inMonth ? T.text : T.faint }}>{d.getDate()}</div>
               {items.slice(0, 3).map((x, i) => {
-                if (x.kind === "allday") return <div key={i} className="truncate rounded px-1 mb-0.5 text-[10px] font-semibold text-white" style={{ background: ACCENTS[x.o.ev.color] || ACCENTS.blue }}>{x.o.ev.timeOff ? "🏖 " : ""}{x.o.ev.title}</div>;
+                if (x.kind === "allday") return <div key={i} className="rounded px-1 mb-0.5 text-[10px] font-semibold text-white flex items-center gap-1" style={{ background: ACCENTS[x.o.ev.color] || ACCENTS.blue }}>{x.o.ev.timeOff ? <Icon name="umbrella" size={9} color="white" sw={2.4} /> : x.o.ev.holiday ? <Icon name="flag" size={9} color="white" sw={2.4} /> : null}<span className="truncate">{x.o.ev.title}</span></div>;
                 if (x.kind === "event") { const c = colorSet(x.o.ev.color, T.mode); return <div key={i} className="truncate rounded px-1 mb-0.5 text-[10px] font-medium" style={{ background: c.bg, color: c.text }}>{x.o.ev.title}</div>; }
                 const done = x.it.done;
                 const c = done ? colorSet("green", T.mode) : prioSet(x.it.task.priority, T.mode);
@@ -863,10 +948,119 @@ function SettingsRow({ icon, label, right, danger, onClick }) {
   return (
     <button onClick={onClick} className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium text-left rl-hover"
       style={{ background: T.surface2, color: danger ? T.danger : T.text }}>
-      <span className="text-base leading-none w-5 text-center">{icon}</span>
+      <span className="w-5 flex items-center justify-center" style={{ color: "inherit" }}>{icon}</span>
       <span className="flex-1 truncate">{label}</span>
       <span className="text-xs" style={{ color: T.faint }}>{right ?? "›"}</span>
     </button>
+  );
+}
+
+/* ---------- stats dashboard ---------- */
+function StatsModal({ tasks, events, categories, onClose }) {
+  const T = useT();
+  const today = new Date();
+  const todayKey = dateKey(today);
+  const done = tasks.filter((t) => t.done && t.completedAt);
+
+  const counts = {};
+  for (const t of done) {
+    const k = dateKey(new Date(t.completedAt));
+    counts[k] = (counts[k] || 0) + 1;
+  }
+  const WEEKS = 20;
+  const gridStart = startOfWeek(addDays(today, -7 * (WEEKS - 1)));
+  const max = Math.max(1, ...Object.values(counts), 1);
+  const level = (c) => (c === 0 ? 0 : Math.min(4, Math.ceil((c / max) * 4)));
+  const cellBg = (lv) => (lv === 0 ? T.surface2 : `rgba(48,209,88,${[0, 0.3, 0.5, 0.72, 1][lv]})`);
+
+  let last7 = 0;
+  for (let i = 0; i < 7; i++) last7 += counts[dateKey(addDays(today, -i))] || 0;
+  let streak = 0;
+  {
+    let i = counts[todayKey] ? 0 : 1;
+    while (counts[dateKey(addDays(today, -i))]) { streak++; i++; }
+  }
+  const pendingCount = tasks.filter((t) => !t.done).length;
+  const events30 = useMemo(
+    () => expandOccurrences(events, dateKey(addDays(today, -29)), todayKey, deviceTz).filter((o) => !o.ev.timeOff).length,
+    [events] // eslint-disable-line
+  );
+
+  const byCat = {};
+  for (const t of done) {
+    const name = categories.find((c) => c.id === t.category)?.name || "Other";
+    byCat[name] = (byCat[name] || 0) + 1;
+  }
+  const catRows = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+  const maxCat = Math.max(1, ...catRows.map(([, n]) => n));
+  const byPrio = { 1: 0, 2: 0, 3: 0 };
+  for (const t of done) byPrio[t.priority] = (byPrio[t.priority] || 0) + 1;
+
+  const Tile = ({ label, value }) => (
+    <div className="rounded-xl px-3 py-2 flex-1 min-w-0" style={{ background: T.surface2 }}>
+      <div className="text-lg font-bold" style={{ color: T.text }}>{value}</div>
+      <div className="text-[10px] truncate" style={{ color: T.dim }}>{label}</div>
+    </div>
+  );
+
+  return (
+    <Modal title="Progress" onClose={onClose} wide>
+      <div className="flex gap-2 mb-4">
+        <Tile label="Tasks done" value={done.length} />
+        <Tile label="This week" value={last7} />
+        <Tile label="Day streak" value={streak} />
+        <Tile label="Pending" value={pendingCount} />
+      </div>
+
+      <div className="text-[10px] uppercase tracking-wide mb-1.5" style={{ color: T.dim }}>Completions — last {WEEKS} weeks</div>
+      <div className="flex gap-[3px] overflow-x-auto pb-2 mb-1">
+        {Array.from({ length: WEEKS }, (_, w) => (
+          <div key={w} className="flex flex-col gap-[3px]">
+            {Array.from({ length: 7 }, (_, d) => {
+              const k = dateKey(addDays(gridStart, w * 7 + d));
+              const c = counts[k] || 0;
+              const future = k > todayKey;
+              return <div key={d} title={`${k} — ${c} done`} style={{ width: 11, height: 11, borderRadius: 2.5, background: future ? "transparent" : cellBg(level(c)) }} />;
+            })}
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-1.5 mb-4 text-[10px]" style={{ color: T.dim }}>
+        less {[0, 1, 2, 3, 4].map((lv) => <span key={lv} style={{ width: 10, height: 10, borderRadius: 2, background: cellBg(lv), display: "inline-block" }} />)} more
+        <span className="flex-1" />
+        <span>{events30} event{events30 === 1 ? "" : "s"} in the last 30 days</span>
+      </div>
+
+      {catRows.length > 0 && (
+        <>
+          <div className="text-[10px] uppercase tracking-wide mb-1.5" style={{ color: T.dim }}>Done by category</div>
+          <div className="flex flex-col gap-1.5 mb-4">
+            {catRows.map(([name, n]) => (
+              <div key={name} className="flex items-center gap-2">
+                <span className="text-xs truncate" style={{ color: T.text, width: 90 }}>{name}</span>
+                <div className="flex-1 rounded-full overflow-hidden" style={{ background: T.surface2, height: 8 }}>
+                  <div style={{ width: `${(n / maxCat) * 100}%`, height: "100%", background: T.accent, borderRadius: 99 }} />
+                </div>
+                <span className="text-xs" style={{ color: T.dim, width: 26, textAlign: "right" }}>{n}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="text-[10px] uppercase tracking-wide mb-1.5" style={{ color: T.dim }}>Done by priority</div>
+      <div className="flex gap-3">
+        {[1, 2, 3].map((p) => {
+          const ps = prioSet(p, T.mode);
+          return (
+            <span key={p} className="inline-flex items-center gap-1.5 text-xs" style={{ color: T.text }}>
+              <span className="rounded-full" style={{ width: 8, height: 8, background: ps.dot, display: "inline-block" }} />
+              {ps.label}: {byPrio[p] || 0}
+            </span>
+          );
+        })}
+      </div>
+    </Modal>
   );
 }
 
@@ -917,6 +1111,7 @@ export default function Planner() {
   const [tasks, setTasks] = useState([]);
   const [events, setEvents] = useState([]);
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [waiting, setWaiting] = useState([]);
   const [holidayCals, setHolidayCals] = useState([]);
   const [holidayCache, setHolidayCache] = useState({});
   const [country, setCountry] = useState(() => guessCountry());
@@ -926,11 +1121,12 @@ export default function Planner() {
   const [itemDraft, setItemDraft] = useState(null);
   const [showCats, setShowCats] = useState(false);
   const [showHolidays, setShowHolidays] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [quickTitle, setQuickTitle] = useState("");
+  const [newWait, setNewWait] = useState("");
   const [saveState, setSaveState] = useState("idle");
   const [syncErr, setSyncErr] = useState("");
   const [idWidgetOpen, setIdWidgetOpen] = useState(false);
-  const [appIcon, setAppIcon] = useState(() => { try { return localStorage.getItem("rollover-icon") || "blue"; } catch { return "blue"; } });
   const [dragPreview, setDragPreview] = useState(null);
   const [createPreview, setCreatePreview] = useState(null);
   const [hourH, setHourH] = useState(HOUR_H_BASE);
@@ -976,13 +1172,13 @@ export default function Planner() {
         if (!alive) return;
         if (d) {
           const m = migrate(d);
-          setTasks(m.tasks); setEvents(m.events); setCategories(m.categories);
+          setTasks(m.tasks); setEvents(m.events); setCategories(m.categories); setWaiting(m.waiting);
           setHolidayCals(m.holidayCals); setHolidayCache(m.holidayCache); setCountry(m.country);
         } else if (user) {
           const raw = localStorage.getItem(STORE_KEY);
           if (raw) {
             const m = migrate(JSON.parse(raw));
-            setTasks(m.tasks); setEvents(m.events); setCategories(m.categories);
+            setTasks(m.tasks); setEvents(m.events); setCategories(m.categories); setWaiting(m.waiting);
             setHolidayCals(m.holidayCals); setHolidayCache(m.holidayCache); setCountry(m.country);
             saveData(user, m).catch(() => {});
           }
@@ -1001,13 +1197,13 @@ export default function Planner() {
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
-        await saveData(user, { tasks, events, categories, holidayCals, holidayCache, country });
+        await saveData(user, { tasks, events, categories, waiting, holidayCals, holidayCache, country });
         setSaveState("saved");
         setTimeout(() => setSaveState("idle"), 1500);
       } catch (err) { setSaveState("error"); setSyncErr(explainSyncError(err)); }
     }, 500);
     return () => clearTimeout(saveTimer.current);
-  }, [tasks, events, categories, holidayCals, holidayCache, country, loaded, user]);
+  }, [tasks, events, categories, waiting, holidayCals, holidayCache, country, loaded, user]);
 
   /* land on the current time; only view changes re-scroll */
   useEffect(() => {
@@ -1031,17 +1227,6 @@ export default function Planner() {
       el.style.setProperty("height", "calc(100% - env(safe-area-inset-top))");
     }
   }, [idWidgetOpen]);
-
-  const pickAppIcon = useCallback((id) => {
-    setAppIcon(id);
-    try { localStorage.setItem("rollover-icon", id); } catch { /* private mode */ }
-    const man = document.getElementById("rl-manifest");
-    const apple = document.getElementById("rl-apple-icon");
-    const theme = document.getElementById("rl-theme");
-    if (man) man.href = `/manifest-${id}.webmanifest`;
-    if (apple) apple.href = `/icons/${id}-180.png`;
-    if (theme) theme.content = ICON_VARIANTS.find((v) => v.id === id)?.c || "#0a84ff";
-  }, []);
 
   /* keep the zoom origin (pinch centre / cursor) fixed while the scale changes */
   useLayoutEffect(() => {
@@ -1106,7 +1291,7 @@ export default function Planner() {
     const holOcc = holidayEvents.map((ev) => ({ ev, occDate: ev.date, allDay: true, dispDate: ev.date, renderKey: ev.id }));
     return [...evOcc, ...holOcc];
   }, [events, range, holidayEvents]);
-  const schedule = useMemo(() => scheduleTasks(tasks, events, categories, now, deviceTz), [tasks, events, categories, now]);
+  const schedule = useMemo(() => scheduleTasks(tasks, events, categories, now, deviceTz, waiting), [tasks, events, categories, now, waiting]);
 
   const timedByDay = useMemo(() => {
     const m = {};
@@ -1161,6 +1346,16 @@ export default function Planner() {
     if (!quickTitle.trim()) return;
     setTasks((ts) => [...ts, { id: uid(), title: quickTitle.trim(), duration: 60, deadline: null, priority: 2, category: categories[0]?.id, done: false, createdAt: Date.now(), scheduledAt: null, autoReschedule: true, completedSlot: null }]);
     setQuickTitle("");
+  };
+  const addWait = () => {
+    if (!newWait.trim()) return;
+    setWaiting((ws) => [...ws, { id: uid(), title: newWait.trim(), done: false, createdAt: Date.now() }]);
+    setNewWait("");
+  };
+  const toggleWait = (id) => setWaiting((ws) => ws.map((w) => (w.id === id ? { ...w, done: !w.done, doneAt: !w.done ? Date.now() : null } : w)));
+  const deleteWait = (id) => {
+    setWaiting((ws) => ws.filter((w) => w.id !== id));
+    setTasks((ts) => ts.map((t) => (t.waitingOn === id ? { ...t, waitingOn: null } : t)));
   };
   const saveTask = (t) => { setTasks((ts) => { const i = ts.findIndex((x) => x.id === t.id); if (i === -1) return [...ts, t]; const c = ts.slice(); c[i] = t; return c; }); setItemDraft(null); };
   const saveEvent = (ev) => { setEvents((es) => { const i = es.findIndex((x) => x.id === ev.id); if (i === -1) return [...es, ev]; const c = es.slice(); c[i] = ev; return c; }); setItemDraft(null); };
@@ -1649,6 +1844,9 @@ export default function Planner() {
               const p = prioSet(t.priority, T.mode);
               const prereq = t.dependsOn ? tasks.find((x) => x.id === t.dependsOn) : null;
               const prereqPending = prereq && !prereq.done;
+              const waitItem = t.waitingOn ? waiting.find((w) => w.id === t.waitingOn) : null;
+              const held = waitItem && !waitItem.done;
+              const cl = t.checklist || [];
               const overdue = slot && ((t.deadline && slot.date > t.deadline) || (slot.pinned && (slot.date < dateKey(now) || (slot.date === dateKey(now) && slot.end <= nowMin))));
               return (
                 <div key={t.id} className="group flex items-start gap-2 px-2 py-2 rounded-lg rl-hover cursor-pointer" onClick={() => openTask(t)}>
@@ -1658,14 +1856,41 @@ export default function Planner() {
                       <span className="rounded-full flex-shrink-0" style={{ width: 6, height: 6, background: p.dot }} />{t.title}
                     </div>
                     <div className="text-[11px]" style={{ color: overdue ? T.danger : T.dim }}>
-                      {slot ? `${slot.pinned ? "📌 " : ""}${sameDay(parseKey(slot.date), now) ? "Today" : `${DOW[dowOfKey(slot.date)]} ${+slot.date.slice(8)}`} · ${toAmPm(slot.start)}` : prereqPending && !schedule[prereq.id] ? `Waiting on “${prereq.title}”` : "No slot in next 4 weeks"}
-                      {" · "}{t.duration < 60 ? `${t.duration}m` : `${t.duration / 60}h`} · {catName(t.category)}{slot && prereqPending ? ` · ⛓ after ${prereq.title}` : ""}{overdue ? " · overdue" : ""}
+                      {slot ? `${slot.pinned ? "pinned · " : ""}${sameDay(parseKey(slot.date), now) ? "Today" : `${DOW[dowOfKey(slot.date)]} ${+slot.date.slice(8)}`} · ${toAmPm(slot.start)}` : held ? `Held — waiting for “${waitItem.title}”` : prereqPending && !schedule[prereq.id] ? `Waiting on “${prereq.title}”` : "No slot in next 4 weeks"}
+                      {" · "}{t.duration < 60 ? `${t.duration}m` : `${t.duration / 60}h`} · {catName(t.category)}{slot && prereqPending ? ` · after ${prereq.title}` : ""}{cl.length ? ` · ${cl.filter((c) => c.done).length}/${cl.length}` : ""}{overdue ? " · overdue" : ""}
                     </div>
                   </div>
                   <button onClick={(e) => { e.stopPropagation(); deleteTask(t.id); }} className="opacity-0 group-hover:opacity-100 text-xs px-1" style={{ color: T.faint }} aria-label="Delete task">✕</button>
                 </div>
               );
             })}
+            <div className="flex items-center gap-1.5 px-2 mt-3 mb-1">
+              <Icon name="clock" size={11} color={T.dim} />
+              <span className="text-[10px] uppercase tracking-wide flex-1" style={{ color: T.dim }}>Waiting on</span>
+            </div>
+            <div className="flex gap-1.5 px-2 mb-1">
+              <input value={newWait} onChange={(e) => setNewWait(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addWait()}
+                placeholder="e.g. Reply from Dave…" className="flex-1 rounded-lg px-2.5 py-1.5 text-xs min-w-0" style={inputStyle(T)} />
+              <button onClick={addWait} className="rounded-lg text-white font-bold text-xs px-2" style={{ background: T.accent }}>＋</button>
+            </div>
+            {waiting.map((w) => {
+              const holds = tasks.filter((t) => !t.done && t.waitingOn === w.id);
+              return (
+                <div key={w.id} className="group flex items-start gap-2 px-2 py-1.5 rounded-lg rl-hover">
+                  <div className="mt-0.5"><Check checked={!!w.done} onToggle={() => toggleWait(w.id)} color={ACCENTS.orange} /></div>
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-sm truncate ${w.done ? "line-through" : ""}`} style={{ color: w.done ? T.faint : T.text }}>{w.title}</div>
+                    {holds.length > 0 && (
+                      <div className="text-[11px] truncate" style={{ color: w.done ? T.faint : colorSet("orange", T.mode).text }}>
+                        holding {holds.length}: {holds.map((t) => t.title).join(", ")}
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={() => deleteWait(w.id)} className="opacity-0 group-hover:opacity-100 text-xs px-1" style={{ color: T.faint }} aria-label="Delete">✕</button>
+                </div>
+              );
+            })}
+
             {doneTasks.length > 0 && (
               <>
                 <div className="text-[10px] uppercase tracking-wide px-2 mt-3 mb-1" style={{ color: T.dim }}>Completed</div>
@@ -1681,25 +1906,14 @@ export default function Planner() {
           </div>
 
           <div className="px-3 py-3 border-t flex flex-col gap-1.5" style={{ borderColor: T.border }}>
-            <SettingsRow icon="⚙" label="Hours & categories" onClick={() => setShowCats(true)} />
-            <SettingsRow icon="🎌" label="Holiday calendars" right={holidayCals.length ? String(holidayCals.length) : "›"} onClick={() => setShowHolidays(true)} />
-            {isMobile && <SettingsRow icon={mode === "dark" ? "☀" : "☾"} label={mode === "dark" ? "Light mode" : "Dark mode"} onClick={() => setMode(mode === "dark" ? "light" : "dark")} />}
+            <SettingsRow icon={<Icon name="sliders" size={15} />} label="Hours & categories" onClick={() => setShowCats(true)} />
+            <SettingsRow icon={<Icon name="flag" size={15} />} label="Holiday calendars" right={holidayCals.length ? String(holidayCals.length) : "›"} onClick={() => setShowHolidays(true)} />
+            {isMobile && <SettingsRow icon={<Icon name={mode === "dark" ? "sun" : "moon"} size={15} />} label={mode === "dark" ? "Light mode" : "Dark mode"} onClick={() => setMode(mode === "dark" ? "light" : "dark")} />}
             {user ? (
-              <SettingsRow icon="👤" label={user.email} right="Sign out" danger onClick={doLogout} />
+              <SettingsRow icon={<Icon name="user" size={15} />} label={user.email} right="Sign out" danger onClick={doLogout} />
             ) : (
-              <SettingsRow icon="👤" label="Sign in to sync across devices" onClick={openLogin} />
+              <SettingsRow icon={<Icon name="user" size={15} />} label="Sign in to sync across devices" onClick={openLogin} />
             )}
-            <div className="flex items-center gap-2 px-1 pt-1.5">
-              <span className="text-[10px] uppercase tracking-wide flex-1" style={{ color: T.dim }}>App icon</span>
-              {ICON_VARIANTS.map((v) => (
-                <button key={v.id} onClick={() => pickAppIcon(v.id)} aria-label={`${v.id} icon`}
-                  className="rounded-lg flex items-center justify-center font-bold"
-                  style={{ width: 26, height: 26, background: v.c, color: v.glyph, fontSize: 14, outline: appIcon === v.id ? `2px solid ${T.accent}` : "none", outlineOffset: 2 }}>
-                  ↻
-                </button>
-              ))}
-            </div>
-            <span className="text-[9px] px-1" style={{ color: T.faint }}>Icon applies when you add Rollover to your home screen</span>
           </div>
         </div>
         )}
@@ -1709,7 +1923,7 @@ export default function Planner() {
           <div className={`flex items-center border-b ${isMobile ? "gap-1 px-2 py-2" : "gap-2 px-4 py-2.5"}`} style={{ borderColor: T.border }}>
             {isMobile && (
               <button onClick={() => setDrawerOpen(true)} className="relative rounded-lg px-2 py-1.5 text-sm" style={{ background: T.surface2, color: T.text }} aria-label="Open tasks">
-                ☰{pendingTasks.length > 0 && <span className="absolute -top-1 -right-1 rounded-full text-[9px] font-bold text-white flex items-center justify-center" style={{ background: T.danger, minWidth: 15, height: 15, padding: "0 3px" }}>{pendingTasks.length}</span>}
+                <Icon name="menu" size={16} />{pendingTasks.length > 0 && <span className="absolute -top-1 -right-1 rounded-full text-[9px] font-bold text-white flex items-center justify-center" style={{ background: T.danger, minWidth: 15, height: 15, padding: "0 3px" }}>{pendingTasks.length}</span>}
               </button>
             )}
             <h1 className={`font-bold ${isMobile ? "text-sm mr-1" : "text-lg mr-2"}`} style={{ color: T.text }}>{title}</h1>
@@ -1720,7 +1934,8 @@ export default function Planner() {
               ))}
             </div>
             <div className="flex-1" />
-            {!isMobile && <button onClick={() => setMode(mode === "dark" ? "light" : "dark")} className="px-2 py-1 text-sm rounded-md" style={{ color: T.dim }} title="Toggle dark mode" aria-label="Toggle dark mode">{mode === "dark" ? "☀" : "☾"}</button>}
+            <button onClick={() => setShowStats(true)} className="px-2 py-1 rounded-md" style={{ color: T.dim }} title="Progress" aria-label="Progress stats"><Icon name="chart" size={15} /></button>
+            {!isMobile && <button onClick={() => setMode(mode === "dark" ? "light" : "dark")} className="px-2 py-1 text-sm rounded-md" style={{ color: T.dim }} title="Toggle dark mode" aria-label="Toggle dark mode">{mode === "dark" ? <Icon name="sun" size={15} /> : <Icon name="moon" size={15} />}</button>}
             {!isMobile && <button onClick={() => { lastDirRef.current = -1; shift(-1); }} className="px-2 py-1 text-sm" style={{ color: T.accent }} aria-label="Previous">‹</button>}
             <button onClick={() => { lastDirRef.current = 1; setAnchor(new Date()); }} className="px-2.5 py-1 text-xs font-medium" style={{ color: T.accent }}>Today</button>
             {!isMobile && <button onClick={() => { lastDirRef.current = 1; shift(1); }} className="px-2 py-1 text-sm" style={{ color: T.accent }} aria-label="Next">›</button>}
@@ -1748,19 +1963,13 @@ export default function Planner() {
         </div>
 
         {itemDraft && (
-          <ItemModal draft={itemDraft} events={events} tasks={tasks} categories={categories}
+          <ItemModal draft={itemDraft} events={events} tasks={tasks} waiting={waiting} categories={categories}
             onSaveEvent={saveEvent} onSaveTask={saveTask}
             onDeleteSeries={deleteSeries} onDeleteOccurrence={deleteOccurrence} onDeleteTask={deleteTask}
             onClose={() => setItemDraft(null)} />
         )}
-        {idWidgetOpen && (
-          <button onClick={closeLogin} aria-label="Close sign-in"
-            className="fixed rounded-full flex items-center justify-center text-white font-bold"
-            style={{ top: "calc(env(safe-area-inset-top) + 10px)", right: 12, width: 34, height: 34, background: "rgba(0,0,0,0.55)", zIndex: 2147483001, fontSize: 15 }}>
-            ✕
-          </button>
-        )}
         {showCats && <CategoriesModal categories={categories} onSave={(cs) => { setCategories(cs); setShowCats(false); }} onClose={() => setShowCats(false)} />}
+        {showStats && <StatsModal tasks={tasks} events={events} categories={categories} onClose={() => setShowStats(false)} />}
         {showHolidays && <HolidaysModal selected={holidayCals} country={country} onSave={(sel, c) => { setHolidayCals(sel); setCountry(c); setShowHolidays(false); }} onClose={() => setShowHolidays(false)} />}
       </div>
     </ThemeCtx.Provider>

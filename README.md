@@ -131,3 +131,20 @@ the sidebar footer — the choice is applied to the manifest/apple-touch-icon
 immediately, but installed home-screen icons are fixed at install time (a web
 platform limit): re-add the app after changing it. No service worker is
 included on purpose, so deploys are never served stale from a cache.
+
+## Waiting list
+Sidebar -> "Waiting on": track things you're waiting for from other people
+(a reply, family plans). Link a task to a waiting item via "Waiting for" in
+the task editor — the task stays off the calendar entirely (dependents too)
+until you check the waiting item off. Each item shows which tasks it's
+holding, so you know exactly what to chase people about.
+
+## Progress dashboard
+Chart button in the header: GitHub-style contribution heatmap of completed
+tasks (20 weeks), totals (done / this week / streak / pending), events in
+the last 30 days, and done-by-category / done-by-priority breakdowns.
+
+## Notes & checklists
+Every event and task takes free-text notes — URLs become tappable link chips
+(recipe links etc.) — and a checklist (packing lists and the like). Checklist
+progress (2/5) shows in the task list.
