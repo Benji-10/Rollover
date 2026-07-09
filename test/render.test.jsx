@@ -41,15 +41,19 @@ describe("Rollover app", () => {
     spy.mockRestore();
   });
 
-  it("switches views (day/week/month) without crashing", async () => {
+  it("drills week -> month -> year and back down without crashing", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     render(<Planner />);
-    await waitFor(() => screen.getByText("month"));
-    fireEvent.click(screen.getByText("month"));
+    /* week -> month via the header back button */
+    await waitFor(() => screen.getByLabelText("Switch to month view"));
+    fireEvent.click(screen.getByLabelText("Switch to month view"));
     await waitFor(() => screen.getByText("Sun"));
-    fireEvent.click(screen.getByText("day"));
-    await waitFor(() => screen.getByText("week"));
-    fireEvent.click(screen.getByText("week"));
+    /* month -> year */
+    fireEvent.click(screen.getByLabelText("Switch to year view"));
+    await waitFor(() => screen.getByText("Sep"));
+    /* year -> month by picking a month, month -> week by picking a day */
+    fireEvent.click(screen.getByText("Sep"));
+    await waitFor(() => screen.getByLabelText("Switch to year view"));
     const real = spy.mock.calls.filter((c) => !String(c[0]).includes("not wrapped in act"));
     expect(real).toHaveLength(0);
     spy.mockRestore();

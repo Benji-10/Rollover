@@ -148,3 +148,11 @@ the last 30 days, and done-by-category / done-by-priority breakdowns.
 Every event and task takes free-text notes — URLs become tappable link chips
 (recipe links etc.) — and a checklist (packing lists and the like). Checklist
 progress (2/5) shows in the task list.
+
+## Views & navigation (v2)
+Three levels: week (3-day on mobile), month, year (analogue-style 12-month
+overview). The header label is the navigation: tap "Jul 2026" in week view to
+zoom out to the month, tap "2026" to reach the year; tap a month in year view
+or a day in month view to drill back down. Pinch is now zoom-only and runs as
+a pure compositor transform during the gesture (layout commits once on
+release), so it tracks fingers at full frame rate.

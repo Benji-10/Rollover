@@ -30,6 +30,7 @@ const ICONS = {
   chart: <><line x1="5" y1="20" x2="5" y2="12" /><line x1="11" y1="20" x2="11" y2="5" /><line x1="17" y1="20" x2="17" y2="9" /><line x1="2.5" y1="20" x2="19.5" y2="20" /></>,
   menu: <><line x1="4" y1="6.5" x2="20" y2="6.5" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="17.5" x2="20" y2="17.5" /></>,
   umbrella: <><path d="M12 3a8.5 8.5 0 0 1 8.5 8.5H3.5A8.5 8.5 0 0 1 12 3z" /><path d="M12 11.5V18a2 2 0 0 0 4 0" /></>,
+  chevL: <path d="M14.5 5.5L8 12l6.5 6.5" />,
 };
 function Icon({ name, size = 16, color = "currentColor", sw = 1.8, style }) {
   return (
@@ -1099,6 +1100,40 @@ function HolidaysModal({ selected, country, onSave, onClose }) {
   );
 }
 
+/* ---------- year grid (analogue-calendar overview) ---------- */
+function YearGrid({ anchor, now, onPickMonth }) {
+  const T = useT();
+  const y = anchor.getFullYear();
+  return (
+    <div className="flex-1 overflow-y-auto px-3 py-4">
+      <div className="grid grid-cols-3 gap-x-3 gap-y-6 mx-auto" style={{ maxWidth: 780 }}>
+        {Array.from({ length: 12 }, (_, m) => {
+          const gs = startOfWeek(new Date(y, m, 1));
+          const isCur = now.getFullYear() === y && now.getMonth() === m;
+          return (
+            <button key={m} onClick={() => onPickMonth(m)} className="text-left rounded-xl p-1.5 rl-hover">
+              <div className="text-sm font-bold mb-1.5" style={{ color: isCur ? T.danger : T.text }}>{MONTHS[m].slice(0, 3)}</div>
+              <div className="grid grid-cols-7 gap-y-1">
+                {Array.from({ length: 42 }, (_, i) => {
+                  const d = addDays(gs, i);
+                  if (d.getMonth() !== m) return <span key={i} />;
+                  const t = sameDay(d, now);
+                  return (
+                    <span key={i} className="text-[9px] text-center rounded-full font-medium"
+                      style={{ color: t ? "white" : T.dim, background: t ? T.danger : "transparent", width: 16, height: 16, lineHeight: "16px", justifySelf: "center" }}>
+                      {d.getDate()}
+                    </span>
+                  );
+                })}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ==================================================================== */
 export default function Planner() {
   const [mode, setMode] = useState(() => { try { return localStorage.getItem("rollover-theme") || "dark"; } catch { return "dark"; } });
@@ -1134,6 +1169,11 @@ export default function Planner() {
   const [transition, setTransition] = useState(false);
   const [isMobile, setIsMobile] = useState(() => (typeof window !== "undefined" ? window.innerWidth < 640 : false));
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerClosing, setDrawerClosing] = useState(false);
+  const closeDrawer = useCallback(() => {
+    setDrawerClosing(true);
+    setTimeout(() => { setDrawerOpen(false); setDrawerClosing(false); }, 190);
+  }, []);
   const zoomAnchor = useRef(null);
   const lastDirRef = useRef(1);
   const wheelAccum = useRef(0);
@@ -1207,7 +1247,7 @@ export default function Planner() {
 
   /* land on the current time; only view changes re-scroll */
   useEffect(() => {
-    if (!loaded || (view !== "week" && view !== "day")) return;
+    if (!loaded || view !== "week") return;
     requestAnimationFrame(() => {
       if (scrollRef.current) {
         const m = new Date();
@@ -1248,6 +1288,7 @@ export default function Planner() {
     if (view === "week") {
       return { start: dateKey(anchor), end: dateKey(addDays(anchor, isMobile ? 2 : 6)) };
     }
+    /* year view draws no items — keep the expansion window trivial */
     return { start: dateKey(anchor), end: dateKey(anchor) };
   }, [view, anchor, isMobile]);
 
@@ -1371,7 +1412,6 @@ export default function Planner() {
   const openMaps = useCallback((loc) => window.open(`https://www.google.com/maps/search/?api=1&query=${loc.lat},${loc.lon}`, "_blank"), []);
 
   /* view switch with a short cross-fade/scale */
-  const VIEW_ORDER = ["day", "week", "month"];
   const changeView = useCallback((v) => {
     setView((cur) => {
       if (v === cur) return cur;
@@ -1380,34 +1420,24 @@ export default function Planner() {
       return v;
     });
   }, []);
-  const zoomView = useCallback((dir) => {
-    /* dir -1 = toward day (in), +1 = toward month (out) */
-    setView((cur) => {
-      const i = VIEW_ORDER.indexOf(cur);
-      const ni = Math.min(VIEW_ORDER.length - 1, Math.max(0, i + dir));
-      if (ni === i) return cur;
-      setTransition(true);
-      setTimeout(() => setTransition(false), 260);
-      return VIEW_ORDER[ni];
-    });
-  }, []);
 
   viewRef.current = view;
-  const visibleN = view === "day" ? 1 : isMobile ? 3 : 7;
+  const visibleN = isMobile ? 3 : 7;
   const anchorKeyRef = useRef(dateKey(anchor));
   anchorKeyRef.current = dateKey(anchor);
   const visNRef = useRef(visibleN);
   visNRef.current = visibleN;
   const days = useMemo(() => {
-    if (view === "month") return [];
+    if (view !== "week") return [];
     return Array.from({ length: visibleN }, (_, i) => addDays(anchor, i));
   }, [view, anchor, visibleN]);
 
   const shift = useCallback((dir) => {
     lastDirRef.current = dir;
     setAnchor((a) => {
+      if (view === "year") { const d = new Date(a); d.setFullYear(d.getFullYear() + dir); return d; }
       if (view === "month") { const d = new Date(a); d.setMonth(d.getMonth() + dir); return d; }
-      return addDays(a, dir * (view === "week" ? (isMobile ? 3 : 7) : 1));
+      return addDays(a, dir * (isMobile ? 3 : 7));
     });
   }, [view, isMobile]);
 
@@ -1660,16 +1690,15 @@ export default function Planner() {
 
     if (g.pts.size === 2) {
       const [a, b] = [...g.pts.values()];
-      g.startDx = Math.abs(a.x - b.x);
-      g.startDy = Math.abs(a.y - b.y);
+      g.startDist = Math.max(20, Math.hypot(a.x - b.x, a.y - b.y));
       g.startHourH = hourHRef.current;
-      g.axis = null;
       g.pinching = true;
-      /* remember which minute sits under the pinch centre so zoom keeps it fixed */
+      g.lastR = null;
+      /* remember which content point sits under the pinch centre so zoom keeps it fixed */
       if (scrollRef.current) {
         const rect = scrollRef.current.getBoundingClientRect();
         const centerY = (a.y + b.y) / 2 - rect.top;
-        g.anchorMinute = ((scrollRef.current.scrollTop + centerY) / g.startHourH) * 60;
+        g.anchorContentY = scrollRef.current.scrollTop + centerY;
         g.anchorOffsetY = centerY;
       }
       if (dragRef.current) {
@@ -1692,24 +1721,17 @@ export default function Planner() {
       if (g.pinching && g.pts.size === 2) {
         ev.preventDefault();
         const [a, b] = [...g.pts.values()];
-        const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
-        if (!g.axis) {
-          const cdx = Math.abs(dx - g.startDx), cdy = Math.abs(dy - g.startDy);
-          if (cdx > 14 || cdy > 14) g.axis = cdy >= cdx ? "v" : "h";
-        }
-        if (g.axis === "v") {
-          const ratio = dy / (g.startDy || 1);
-          g.zoomTarget = Math.min(HOUR_H_MAX, Math.max(HOUR_H_MIN, g.startHourH * ratio));
-          /* one state update per frame, fractional scale — no integer stepping */
-          if (!g.raf) g.raf = requestAnimationFrame(() => {
-            g.raf = null;
-            if (g.anchorMinute != null) zoomAnchor.current = { minute: g.anchorMinute, offsetY: g.anchorOffsetY };
-            setHourH(g.zoomTarget);
-          });
-        } else if (g.axis === "h" && !g.fired) {
-          const ratio = dx / (g.startDx || 1);
-          if (ratio < 0.6) { g.fired = true; zoomView(-1); }       /* pinch in -> more detail */
-          else if (ratio > 1.6) { g.fired = true; zoomView(1); }   /* spread -> less detail */
+        const dist = Math.hypot(a.x - b.x, a.y - b.y);
+        /* live zoom is a pure compositor transform — no React re-render per
+           frame, so it tracks the fingers at 60fps; the real layout commits
+           once on release */
+        let r = dist / g.startDist;
+        r = Math.min(HOUR_H_MAX / g.startHourH, Math.max(HOUR_H_MIN / g.startHourH, r));
+        g.lastR = r;
+        const el = gridBodyRef.current;
+        if (el && g.anchorContentY != null) {
+          el.style.transformOrigin = `0px ${g.anchorContentY}px`;
+          el.style.transform = `scaleY(${r})`;
         }
       } else if (g.pts.size === 1 && !g.pinching) {
         if (viewRef.current !== "month") return; /* time grid: one finger scrolls; the week strip changes days */
@@ -1728,10 +1750,16 @@ export default function Planner() {
     };
     const up = (ev) => {
       g.pts.delete(ev.pointerId);
-      if (g.pts.size < 2) {
-        g.pinching = false; g.axis = null; g.fired = false;
-        if (g.raf) { cancelAnimationFrame(g.raf); g.raf = null; }
-        if (g.zoomTarget != null) { setHourH(Math.round(g.zoomTarget)); g.zoomTarget = null; }
+      if (g.pts.size < 2 && g.pinching) {
+        g.pinching = false;
+        const el = gridBodyRef.current;
+        if (el) { el.style.transform = ""; el.style.transformOrigin = ""; }
+        if (g.lastR != null) {
+          const newH = Math.round(Math.min(HOUR_H_MAX, Math.max(HOUR_H_MIN, g.startHourH * g.lastR)));
+          zoomAnchor.current = { minute: (g.anchorContentY / g.startHourH) * 60, offsetY: g.anchorOffsetY };
+          setHourH(newH);
+          g.lastR = null;
+        }
       }
       if (g.pts.size === 0) {
         window.removeEventListener("pointermove", move);
@@ -1743,7 +1771,7 @@ export default function Planner() {
     window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
-  }, [zoomView, stepDay, clearTouchBlock]);
+  }, [stepDay, clearTouchBlock]);
 
   /* desktop wheel: ctrl/cmd+scroll zooms (anchored at the cursor),
      plain horizontal scroll (trackpad / shift+wheel) pages the days along */
@@ -1790,14 +1818,11 @@ export default function Planner() {
   }, [anchor]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
-  const title = (() => {
-    if (view === "month") return `${MONTHS[anchor.getMonth()]} ${anchor.getFullYear()}`;
-    if (view === "day") return isMobile ? `${MONTHS[anchor.getMonth()].slice(0, 3)} ${anchor.getDate()}` : `${MONTHS[anchor.getMonth()]} ${anchor.getDate()}, ${anchor.getFullYear()}`;
-    const we = addDays(anchor, (isMobile ? 3 : 7) - 1);
-    const m1 = MONTHS[anchor.getMonth()].slice(0, 3), m2 = MONTHS[we.getMonth()].slice(0, 3);
-    if (isMobile) return anchor.getMonth() === we.getMonth() ? `${m1} ${anchor.getDate()} – ${we.getDate()}` : `${m1} ${anchor.getDate()} – ${m2} ${we.getDate()}`;
-    return anchor.getMonth() === we.getMonth() ? `${MONTHS[anchor.getMonth()]} ${anchor.getFullYear()}` : `${m1} – ${m2} ${we.getFullYear()}`;
-  })();
+  /* the header label doubles as the "zoom out" control:
+     week -> month -> year, each showing where a tap takes you */
+  const backLabel = view === "week"
+    ? `${MONTHS[anchor.getMonth()].slice(0, 3)} ${anchor.getFullYear()}`
+    : `${anchor.getFullYear()}`;
 
   const pendingTasks = tasks.filter((t) => !t.done).sort((a, b) => a.priority - b.priority || a.createdAt - b.createdAt);
   const doneTasks = tasks.filter((t) => t.done).sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0));
@@ -1813,12 +1838,12 @@ export default function Planner() {
 
   return (
     <ThemeCtx.Provider value={T}>
-      <style>{`.rl-hover:hover{background:${T.hover}} button{cursor:pointer} button:disabled{cursor:not-allowed} select,input[type=date]{cursor:pointer} a{cursor:pointer} html{color-scheme:${mode}} ::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-thumb{background:${T.mode === "dark" ? "#3a3a3e" : "#c9c9ce"};border-radius:5px;border:2px solid ${T.surface}} ::-webkit-scrollbar-track{background:transparent} @keyframes rlFade{0%{opacity:0;transform:scale(0.985)}100%{opacity:1;transform:scale(1)}} .rl-fade{animation:rlFade 0.26s cubic-bezier(0.22,0.61,0.36,1)} @keyframes rlSlideL{0%{opacity:0.5;transform:translateX(26px)}100%{opacity:1;transform:none}} @keyframes rlSlideR{0%{opacity:0.5;transform:translateX(-26px)}100%{opacity:1;transform:none}} .rl-slide-l{animation:rlSlideL 0.22s ease-out} .rl-slide-r{animation:rlSlideR 0.22s ease-out} @media (prefers-reduced-motion: reduce){.rl-slide-l,.rl-slide-r{animation:none}} @media (max-width:640px){input,select,textarea{font-size:16px !important}} @keyframes rlSheet{0%{transform:translateY(48px);opacity:0.55}100%{transform:none;opacity:1}} .rl-sheet{animation:rlSheet 0.24s cubic-bezier(0.22,0.61,0.36,1)} @media (prefers-reduced-motion: reduce){.rl-sheet{animation:none}} *{-webkit-touch-callout:none} input,textarea{-webkit-user-select:text;user-select:text} @media (prefers-reduced-motion: reduce){.rl-fade{animation:none}}`}</style>
+      <style>{`.rl-hover:hover{background:${T.hover}} button{cursor:pointer} button:disabled{cursor:not-allowed} select,input[type=date]{cursor:pointer} a{cursor:pointer} html{color-scheme:${mode}} ::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-thumb{background:${T.mode === "dark" ? "#3a3a3e" : "#c9c9ce"};border-radius:5px;border:2px solid ${T.surface}} ::-webkit-scrollbar-track{background:transparent} @keyframes rlFade{0%{opacity:0;transform:scale(0.985)}100%{opacity:1;transform:scale(1)}} .rl-fade{animation:rlFade 0.26s cubic-bezier(0.22,0.61,0.36,1)} @keyframes rlSlideL{0%{opacity:0.5;transform:translateX(26px)}100%{opacity:1;transform:none}} @keyframes rlSlideR{0%{opacity:0.5;transform:translateX(-26px)}100%{opacity:1;transform:none}} .rl-slide-l{animation:rlSlideL 0.22s ease-out} .rl-slide-r{animation:rlSlideR 0.22s ease-out} @media (prefers-reduced-motion: reduce){.rl-slide-l,.rl-slide-r{animation:none}} @media (max-width:640px){input,select,textarea{font-size:16px !important}} @keyframes rlSheet{0%{transform:translateY(48px);opacity:0.55}100%{transform:none;opacity:1}} .rl-sheet{animation:rlSheet 0.24s cubic-bezier(0.22,0.61,0.36,1)} @keyframes rlDrawerIn{0%{transform:translateX(-100%)}100%{transform:none}} @keyframes rlDrawerOut{0%{transform:none}100%{transform:translateX(-100%)}} .rl-drawer-in{animation:rlDrawerIn 0.22s cubic-bezier(0.22,0.61,0.36,1)} .rl-drawer-out{animation:rlDrawerOut 0.19s ease-in forwards} @keyframes rlFadeBg{0%{opacity:0}100%{opacity:1}} .rl-fadebg{animation:rlFadeBg 0.22s ease-out} .rl-fadebg-out{animation:rlFadeBg 0.19s ease-in reverse forwards} @media (prefers-reduced-motion: reduce){.rl-sheet{animation:none}} *{-webkit-touch-callout:none} input,textarea{-webkit-user-select:text;user-select:text} @media (prefers-reduced-motion: reduce){.rl-fade{animation:none}}`}</style>
       <div className="app-h flex select-none" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", background: T.bg, color: T.text, colorScheme: mode, paddingTop: "env(safe-area-inset-top)" }}>
         {/* ---------- sidebar (drawer on mobile) ---------- */}
-        {isMobile && drawerOpen && <div className="fixed inset-0 z-30" style={{ background: "rgba(0,0,0,0.45)" }} onClick={() => setDrawerOpen(false)} />}
+        {isMobile && drawerOpen && <div className={`fixed inset-0 z-30 ${drawerClosing ? "rl-fadebg-out" : "rl-fadebg"}`} style={{ background: "rgba(0,0,0,0.45)" }} onClick={closeDrawer} />}
         {(!isMobile || drawerOpen) && (
-        <div className={isMobile ? "fixed inset-y-0 left-0 z-40 w-72 flex flex-col border-r" : "w-72 flex-shrink-0 flex flex-col border-r"}
+        <div className={isMobile ? `fixed inset-y-0 left-0 z-40 w-72 flex flex-col border-r ${drawerClosing ? "rl-drawer-out" : "rl-drawer-in"}` : "w-72 flex-shrink-0 flex flex-col border-r"}
           style={{ borderColor: T.border, background: T.surface, boxShadow: isMobile ? T.shadow : "none" }}>
           <div className="px-4 pt-4 pb-2 flex items-center justify-between">
             <h2 className="font-bold text-lg flex items-center gap-1.5" style={{ color: T.text }}>
@@ -1926,13 +1951,16 @@ export default function Planner() {
                 <Icon name="menu" size={16} />{pendingTasks.length > 0 && <span className="absolute -top-1 -right-1 rounded-full text-[9px] font-bold text-white flex items-center justify-center" style={{ background: T.danger, minWidth: 15, height: 15, padding: "0 3px" }}>{pendingTasks.length}</span>}
               </button>
             )}
-            <h1 className={`font-bold ${isMobile ? "text-sm mr-1" : "text-lg mr-2"}`} style={{ color: T.text }}>{title}</h1>
-            <div className="flex rounded-lg overflow-hidden text-xs font-medium" style={{ background: T.surface2 }}>
-              {["day", "week", "month"].map((v) => (
-                <button key={v} onClick={() => changeView(v)} className="px-3 py-1.5 capitalize"
-                  style={{ background: view === v ? (T.mode === "dark" ? "#3a3a3e" : "white") : "transparent", color: view === v ? T.text : T.dim, boxShadow: view === v ? "0 1px 2px rgba(0,0,0,0.15)" : "none", borderRadius: 7, margin: 2 }}>{v}</button>
-              ))}
-            </div>
+            {view === "year" ? (
+              <h1 className={`font-bold px-1 ${isMobile ? "text-base" : "text-lg"}`} style={{ color: T.text }}>{anchor.getFullYear()}</h1>
+            ) : (
+              <button onClick={() => changeView(view === "week" ? "month" : "year")}
+                aria-label={view === "week" ? "Switch to month view" : "Switch to year view"}
+                className={`flex items-center gap-0.5 rounded-lg px-1.5 py-1 font-bold rl-hover ${isMobile ? "text-base" : "text-lg"}`}
+                style={{ color: T.accent }}>
+                <Icon name="chevL" size={14} sw={2.6} />{backLabel}
+              </button>
+            )}
             <div className="flex-1" />
             <button onClick={() => setShowStats(true)} className="px-2 py-1 rounded-md" style={{ color: T.dim }} title="Progress" aria-label="Progress stats"><Icon name="chart" size={15} /></button>
             {!isMobile && <button onClick={() => setMode(mode === "dark" ? "light" : "dark")} className="px-2 py-1 text-sm rounded-md" style={{ color: T.dim }} title="Toggle dark mode" aria-label="Toggle dark mode">{mode === "dark" ? <Icon name="sun" size={15} /> : <Icon name="moon" size={15} />}</button>}
@@ -1943,16 +1971,21 @@ export default function Planner() {
               className={`ml-1 rounded-lg text-white font-semibold text-xs ${isMobile ? "px-2.5 py-1.5" : "px-3 py-1.5"}`} style={{ background: T.accent }}>{isMobile ? "＋" : "＋ New"}</button>
           </div>
 
-          {isMobile && view !== "month" && (
+          {isMobile && view === "week" && (
             <WeekStrip anchor={anchor} now={now} visibleN={visibleN}
               onPickDay={(d) => { lastDirRef.current = d >= anchor ? 1 : -1; setAnchor(d); }}
               onSwipeWeek={(dir) => { lastDirRef.current = dir; setAnchor((a) => addDays(a, dir * 7)); }} />
           )}
-          {view === "month" ? (
+          {view === "year" ? (
+            <div key={anchor.getFullYear()} className={`flex-1 flex flex-col min-h-0 ${transition ? "rl-fade" : lastDirRef.current > 0 ? "rl-slide-l" : "rl-slide-r"}`}>
+              <YearGrid anchor={anchor} now={now}
+                onPickMonth={(m) => { setAnchor(new Date(anchor.getFullYear(), m, 1)); changeView("month"); }} />
+            </div>
+          ) : view === "month" ? (
             <div key={`${anchor.getFullYear()}-${anchor.getMonth()}`} className={`flex-1 flex flex-col min-h-0 ${transition ? "rl-fade" : lastDirRef.current > 0 ? "rl-slide-l" : "rl-slide-r"}`}
               onPointerDown={onGridPointerDown} style={{ touchAction: "pan-y" }}>
               <MonthGrid anchor={anchor} now={now} allDayByDay={allDayByDay} timedByDay={timedByDay} tasksByDay={tasksByDay}
-                onOpenDay={(d) => { setAnchor(d); changeView("day"); }} />
+                onOpenDay={(d) => { setAnchor(d); changeView("week"); }} />
             </div>
           ) : (
             <TimeGrid days={days} now={now} nowMin={nowMin} hourH={hourH} isMobile={isMobile} allDayByDay={allDayByDay} timedByDay={timedByDay} tasksByDay={tasksByDay}
