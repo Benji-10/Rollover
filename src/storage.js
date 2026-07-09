@@ -31,19 +31,41 @@ export const openLogin = () => netlifyIdentity.open();
 export const closeLogin = () => netlifyIdentity.close();
 export const doLogout = () => netlifyIdentity.logout();
 
+/* Mobile networks stall silently; a request with no deadline means the UI
+   says "syncing" forever. Everything network gets a hard timeout instead. */
+const withTimeout = (p, ms, what) =>
+  Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what} timed out`)), ms))]);
+
+const fetchT = async (url, opts = {}, ms = 12000) => {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("request timed out");
+    throw e;
+  } finally {
+    clearTimeout(t);
+  }
+};
+
 async function bearer() {
   const u = netlifyIdentity.currentUser();
   if (!u) return null;
-  const t = await u.jwt();
+  const t = await withTimeout(u.jwt(), 10000, "auth refresh");
   return `Bearer ${t}`;
 }
 
 export async function loadData(user) {
   if (user) {
     const auth = await bearer();
-    const r = await fetch("/.netlify/functions/data", { headers: { Authorization: auth } });
+    const r = await fetchT("/.netlify/functions/data", { headers: { Authorization: auth } });
     if (!r.ok) throw new Error(`load failed (${r.status})`);
     const j = await r.json();
+    if (j.data) {
+      /* mirror locally so the next load works even if the network doesn't */
+      try { localStorage.setItem(STORE_KEY, JSON.stringify(j.data)); } catch { /* quota */ }
+    }
     return j.data || null;
   }
   const raw = localStorage.getItem(STORE_KEY);
@@ -51,15 +73,16 @@ export async function loadData(user) {
 }
 
 export async function saveData(user, data) {
+  /* the local mirror is written first, unconditionally — whatever happens to
+     the network, this device never loses what you just did */
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(data)); } catch { /* quota */ }
   if (user) {
     const auth = await bearer();
-    const r = await fetch("/.netlify/functions/data", {
+    const r = await fetchT("/.netlify/functions/data", {
       method: "PUT",
       headers: { Authorization: auth, "Content-Type": "application/json" },
       body: JSON.stringify({ data }),
     });
     if (!r.ok) throw new Error(`sync failed (${r.status})`);
-    return;
   }
-  localStorage.setItem(STORE_KEY, JSON.stringify(data));
 }

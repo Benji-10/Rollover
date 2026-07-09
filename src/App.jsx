@@ -47,6 +47,7 @@ function explainSyncError(err) {
   if (m.includes("404")) return "Sync endpoint not found (404). Serverless functions aren't deployed — Netlify Drop only ships static files, so use a Git-connected deploy (or `netlify deploy`) for accounts to work.";
   if (m.includes("500")) return "Server error (500). Most likely DATABASE_URL isn't set: Netlify → Site configuration → Environment variables → add DATABASE_URL with your Neon connection string, then redeploy.";
   if (m.includes("401")) return "Not authorised (401). Sign out and back in; if it persists, check Identity is enabled in Netlify (Site configuration → Identity).";
+  if (m.includes("timed out")) return "The sync server didn't respond in time. Your changes are safe on this device and will retry on the next edit — if this keeps happening, check the connection or the Netlify function logs.";
   if (m.toLowerCase().includes("fetch") || m.toLowerCase().includes("network")) return "Network error reaching the sync endpoint. Check your connection, or the site may still be deploying.";
   return `Sync error: ${m}`;
 }
@@ -1152,7 +1153,11 @@ export default function Planner() {
   const [country, setCountry] = useState(() => guessCountry());
   const [now, setNow] = useState(new Date());
   const [view, setView] = useState("week");
-  const [anchor, setAnchor] = useState(new Date());
+  const [anchor, setAnchor] = useState(() => {
+    /* first paint should have today in the middle of the window, not at the left */
+    const vis = typeof window !== "undefined" && window.innerWidth < 640 ? 3 : 7;
+    return addDays(new Date(), -Math.floor(vis / 2));
+  });
   const [itemDraft, setItemDraft] = useState(null);
   const [showCats, setShowCats] = useState(false);
   const [showHolidays, setShowHolidays] = useState(false);
@@ -1223,7 +1228,18 @@ export default function Planner() {
             saveData(user, m).catch(() => {});
           }
         }
-      } catch (err) { setSaveState("error"); setSyncErr(explainSyncError(err)); }
+      } catch (err) {
+        setSaveState("error"); setSyncErr(explainSyncError(err));
+        /* remote failed — the local mirror still has this device's data */
+        try {
+          const raw = localStorage.getItem(STORE_KEY);
+          if (raw && alive) {
+            const m = migrate(JSON.parse(raw));
+            setTasks(m.tasks); setEvents(m.events); setCategories(m.categories); setWaiting(m.waiting);
+            setHolidayCals(m.holidayCals); setHolidayCache(m.holidayCache); setCountry(m.country);
+          }
+        } catch { /* corrupt mirror — start empty */ }
+      }
       skipNextSave.current = true;
       setLoaded(true);
     })();
