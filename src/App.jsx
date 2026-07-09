@@ -7,7 +7,7 @@ import {
   wallToUtc, utcToWall, timeZoneList, tzLabel,
 } from "./time.js";
 import { expandOccurrences, scheduleTasks, windowFor, layoutDay, effectivePriority } from "./scheduler.js";
-import { initIdentity, openLogin, doLogout, loadData, saveData, STORE_KEY, BACKUP_KEY } from "./storage.js";
+import { initIdentity, openLogin, doLogout, loadData, saveData, STORE_KEY } from "./storage.js";
 import { HOLIDAY_CALENDARS, calByCode, guessCountry, fetchHolidays, yearsForRange } from "./holidays.js";
 
 const HOUR_H_BASE = 48;
@@ -364,13 +364,13 @@ function ItemModal({ draft, events, tasks = [], waiting = [], categories, onSave
       footer={
         <>
           {!isNew && (itemType === "event" || itemType === "timeoff") && repeat !== "none" && draft.occDate && (
-            <button onClick={() => onDeleteOccurrence(draft.id, draft.occDate)} className="px-2 py-1.5 text-xs font-medium" style={{ color: T.danger }}>Delete this day</button>
+            <button onClick={() => { if (!window.confirm("Delete this occurrence only?")) return; onDeleteOccurrence(draft.id, draft.occDate); }} className="px-2 py-1.5 text-xs font-medium" style={{ color: T.danger }}>Delete this day</button>
           )}
           {!isNew && (itemType === "event" || itemType === "timeoff") && (
-            <button onClick={() => onDeleteSeries(draft.id)} className="px-2 py-1.5 text-xs font-medium" style={{ color: T.danger }}>{repeat !== "none" ? "Delete series" : "Delete"}</button>
+            <button onClick={() => { if (!window.confirm(repeat !== "none" ? "Delete the whole series?" : "Delete this event?")) return; onDeleteSeries(draft.id); }} className="px-2 py-1.5 text-xs font-medium" style={{ color: T.danger }}>{repeat !== "none" ? "Delete series" : "Delete"}</button>
           )}
           {!isNew && itemType === "task" && (
-            <button onClick={() => onDeleteTask(draft.id)} className="px-2 py-1.5 text-xs font-medium" style={{ color: T.danger }}>Delete</button>
+            <button onClick={() => { if (!window.confirm("Delete this task?")) return; onDeleteTask(draft.id); }} className="px-2 py-1.5 text-xs font-medium" style={{ color: T.danger }}>Delete</button>
           )}
           <div className="flex-1" />
           <button onClick={commit} className="px-4 py-1.5 rounded-lg text-sm font-semibold text-white" style={{ background: T.accent }}>{isNew ? "Add" : "Save"}</button>
@@ -681,22 +681,14 @@ function EventBlock({ occ, lay, hourH, dragPreview, beginDrag, openEvent, openMa
   const g = blockGeom(lay, hourH, start, end);
   const compact = g.height < 34;
   return (
-    <div className="absolute rounded-lg overflow-hidden cursor-grab active:cursor-grabbing select-none group/ev"
+    <div className="absolute rounded-lg cursor-grab active:cursor-grabbing select-none group/ev"
       onPointerDown={(e) => beginDrag(e, { type: "event", occ }, "move")}
       onClick={(e) => { e.stopPropagation(); openEvent(occ); }}
       style={{ ...geomStyle(g), background: c.bg, borderLeft: `3px solid ${c.border}`, zIndex: lay ? lay.z : 2, touchAction: "none" }}>
       <div className="px-1.5 py-0.5 pointer-events-none">
-        <div className="text-xs font-semibold truncate" style={{ color: c.text, lineHeight: compact ? "1.1" : "1.3" }}>{occ.ev.repeat && occ.ev.repeat !== "none" ? "↻ " : ""}{occ.ev.title}</div>
-        {g.height >= 40 && (
-          <div className="text-[10px] truncate" style={{ color: c.text, opacity: 0.7 }}>
-            {toAmPm(start)} – {toAmPm(occ.dispEnd % 1440)}{occ.dispEnd > 1440 ? " ⁺¹" : ""}{occ.ev.tz !== deviceTz ? ` · ${tzLabel(occ.ev.tz, occ.startUtc)}` : ""}
-          </div>
-        )}
-        {g.height >= 64 && occ.ev.location && (
-          <div className="text-[10px] truncate pointer-events-auto cursor-pointer" style={{ color: c.text, opacity: 0.7 }}
-            onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); openMaps(occ.ev.location); }}>
-            <span className="inline-flex items-center gap-0.5"><Icon name="mapPin" size={9} color={c.text} sw={2.2} />{occ.ev.location.name}</span></div>
-        )}
+        <div className="text-xs font-semibold break-words" style={{ color: c.text, lineHeight: compact ? "1.1" : "1.25" }}>
+          {occ.ev.repeat && occ.ev.repeat !== "none" ? "↻ " : ""}{occ.ev.title}
+        </div>
       </div>
       <div className="absolute left-0 right-0 top-0 h-2 opacity-0 group-hover/ev:opacity-100 cursor-row-resize flex justify-center"
         onPointerDown={(e) => beginDrag(e, { type: "event", occ }, "resize-start")} style={{ touchAction: "none" }}>
@@ -721,20 +713,15 @@ function TaskBlock({ item, lay, hourH, dragPreview, beginDrag, openTask, toggleT
   const g = blockGeom(lay, hourH, item.start, item.end);
   const compact = g.height < 34;
   return (
-    <div className={`absolute rounded-lg overflow-hidden select-none group/tk ${done ? "" : "cursor-grab active:cursor-grabbing"}`}
+    <div className={`absolute rounded-lg select-none group/tk ${done ? "" : "cursor-grab active:cursor-grabbing"}`}
       onPointerDown={(e) => { if (!done) beginDrag(e, { type: "task", item }, "move"); }}
       onClick={(e) => { e.stopPropagation(); openTask(t); }}
       style={{ ...geomStyle(g), background: c.bg, borderLeft: `3px dashed ${overdue ? T.danger : c.border}`, zIndex: lay ? lay.z : 2, opacity: done ? 0.6 : 1, touchAction: done ? "auto" : "none" }}
       title={done ? "Completed" : item.pinned ? "Pinned time — drag to move" : "Auto-scheduled — drag to pin a time"}>
-      <div className="flex items-start gap-1 px-1 py-0.5">
-        <div className="mt-0.5"><Check checked={done} onToggle={() => toggleTask(t.id)} color={c.border} /></div>
-        <div className="min-w-0 pointer-events-none">
-          <div className={`text-xs font-semibold flex items-center gap-1 min-w-0 ${done ? "line-through" : ""}`} style={{ color: c.text, lineHeight: compact ? "1.1" : "1.3" }}>
-            {!done && item.pinned && <Icon name="pushpin" size={10} color={c.text} sw={2} />}
-            {!done && item.chained && <Icon name="link" size={10} color={c.text} sw={2} />}
-            <span className="truncate">{t.title}</span>
-          </div>
-          {g.height >= 40 && <div className="text-[10px] truncate" style={{ color: c.text, opacity: 0.7 }}>{toAmPm(item.start)} – {toAmPm(item.end)}{overdue ? " · overdue" : ""}</div>}
+      <div className="px-1.5 py-0.5 pointer-events-none">
+        <div className={`text-xs font-semibold break-words ${done ? "line-through" : ""}`} style={{ color: c.text, lineHeight: compact ? "1.1" : "1.25" }}>
+          {!done && item.chained && <Icon name="link" size={10} color={c.text} sw={2} style={{ display: "inline", marginRight: 3, verticalAlign: "-1px" }} />}
+          {t.title}{overdue ? " · overdue" : ""}
         </div>
       </div>
       {!done && (
@@ -1101,6 +1088,130 @@ function HolidaysModal({ selected, country, onSave, onClose }) {
   );
 }
 
+/* ---------- full-screen item detail (mobile) ---------- */
+function DetailPanel({ detail, closing, tasks, events, categories, schedule, waiting, onBack, onEdit, onToggleTask, onToggleEvCheck, onToggleTaskCheck, openMaps }) {
+  const T = useT();
+  const isTask = detail.type === "task";
+  const t = isTask ? tasks.find((x) => x.id === detail.id) : null;
+  const ev = !isTask ? events.find((x) => x.id === detail.id) : null;
+  const item = t || ev;
+  useEffect(() => { if (!item) onBack(); }, [item, onBack]);
+  if (!item) return null;
+
+  const c = isTask ? prioSet(t.priority, T.mode) : colorSet(ev.color, T.mode);
+  const slot = isTask ? schedule[t.id] : null;
+  const prereq = isTask && t.dependsOn ? tasks.find((x) => x.id === t.dependsOn) : null;
+  const waitItem = isTask && t.waitingOn ? waiting.find((w) => w.id === t.waitingOn) : null;
+  const cl = item.checklist || [];
+  const dateStr = (k) => `${DOW[dowOfKey(k)]} ${+k.slice(8)} ${MONTHS[+k.slice(5, 7) - 1].slice(0, 3)}`;
+  const editable = !ev?.holiday;
+
+  const InfoRow = ({ icon, children }) => (
+    <div className="flex items-start gap-3 py-2">
+      <span className="mt-0.5"><Icon name={icon} size={15} color={T.dim} /></span>
+      <div className="flex-1 min-w-0 text-sm" style={{ color: T.text }}>{children}</div>
+    </div>
+  );
+
+  /* notes with tappable links, preserving line breaks */
+  const noteParts = (item.notes || "").split(/(https?:\/\/[^\s]+)/g);
+
+  return (
+    <div className={`fixed inset-0 z-40 flex flex-col ${closing ? "rl-detail-out" : "rl-detail-in"}`}
+      style={{ background: T.bg, paddingTop: "env(safe-area-inset-top)" }}>
+      <div className="flex items-center px-2 py-2 border-b" style={{ borderColor: T.border }}>
+        <button onClick={onBack} className="flex items-center gap-0.5 px-2 py-1 text-sm font-medium" style={{ color: T.accent }}>
+          <Icon name="chevL" size={15} sw={2.4} />Calendar
+        </button>
+        <div className="flex-1" />
+        {editable && <button onClick={onEdit} className="px-3 py-1 text-sm font-medium" style={{ color: T.accent }}>Edit</button>}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 py-4" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 16px)" }}>
+        <div className="flex items-start gap-2.5 mb-3">
+          <span className="rounded-full mt-1.5 flex-shrink-0" style={{ width: 12, height: 12, background: c.border }} />
+          <h2 className={`text-xl font-bold break-words ${isTask && t.done ? "line-through" : ""}`} style={{ color: T.text }}>{item.title}</h2>
+        </div>
+
+        {!isTask && (
+          <>
+            <InfoRow icon="clock">
+              {ev.allDay
+                ? `All day · ${dateStr(detail.occDate)}${ev.endDate && ev.endDate !== ev.date ? ` – ${dateStr(ev.endDate)}` : ""}`
+                : `${dateStr(detail.occDate)} · ${toAmPm(detail.start)} – ${toAmPm(detail.end % 1440)}${ev.tz !== deviceTz ? ` (${tzLabel(ev.tz)})` : ""}`}
+              {ev.repeat && ev.repeat !== "none" ? <div style={{ color: T.dim }} className="text-xs mt-0.5">↻ repeats {ev.repeat}{ev.repeatUntil ? ` until ${ev.repeatUntil}` : ""}</div> : null}
+            </InfoRow>
+            {ev.location && (
+              <InfoRow icon="mapPin">
+                <button onClick={() => openMaps(ev.location)} className="text-left font-medium" style={{ color: T.accent }}>{ev.location.name}</button>
+              </InfoRow>
+            )}
+            {ev.timeOff && <InfoRow icon="umbrella">Time off — tasks are not scheduled on this day</InfoRow>}
+            {ev.holiday && <InfoRow icon="flag">Public holiday (from your holiday calendar)</InfoRow>}
+          </>
+        )}
+
+        {isTask && (
+          <>
+            <InfoRow icon="clock">
+              {slot
+                ? `${slot.pinned ? "Fixed time · " : ""}${dateStr(slot.date)} · ${toAmPm(slot.start)} – ${toAmPm(slot.end)}`
+                : waitItem && !waitItem.done
+                ? `Held — waiting for “${waitItem.title}”`
+                : prereq && !prereq.done && !schedule[prereq.id]
+                ? `Waiting on “${prereq.title}”`
+                : t.done
+                ? "Completed"
+                : "No slot in the next 4 weeks"}
+              <div style={{ color: T.dim }} className="text-xs mt-0.5">
+                {t.duration < 60 ? `${t.duration}m` : `${t.duration / 60}h`} · {prioSet(t.priority, T.mode).label} priority · {categories.find((x) => x.id === t.category)?.name || "—"}
+                {t.deadline ? ` · due ${t.deadline}` : ""}
+              </div>
+            </InfoRow>
+            {prereq && <InfoRow icon="link">After “{prereq.title}”{prereq.done ? " (done)" : ""}</InfoRow>}
+            {waitItem && <InfoRow icon="clock">Waiting for “{waitItem.title}”{waitItem.done ? " (resolved)" : ""}</InfoRow>}
+          </>
+        )}
+
+        {(item.notes || "").trim() && (
+          <div className="rounded-xl px-3.5 py-3 my-3 text-sm whitespace-pre-wrap break-words" style={{ background: T.surface2, color: T.text }}>
+            {noteParts.map((part, i) =>
+              /^https?:\/\//.test(part)
+                ? <a key={i} href={part} target="_blank" rel="noreferrer" className="underline break-all" style={{ color: T.accent }}>{part}</a>
+                : part
+            )}
+          </div>
+        )}
+
+        {cl.length > 0 && (
+          <div className="my-3">
+            <div className="text-[10px] uppercase tracking-wide mb-1.5" style={{ color: T.dim }}>
+              Checklist · {cl.filter((x) => x.done).length}/{cl.length}
+            </div>
+            <div className="flex flex-col gap-2">
+              {cl.map((x) => (
+                <div key={x.id} className="flex items-center gap-2.5 cursor-pointer"
+                  onClick={() => (isTask ? onToggleTaskCheck(item.id, x.id) : onToggleEvCheck(item.id, x.id))}>
+                  <Check checked={x.done} onToggle={() => (isTask ? onToggleTaskCheck(item.id, x.id) : onToggleEvCheck(item.id, x.id))} color={T.ok} />
+                  <span className={`flex-1 text-sm ${x.done ? "line-through" : ""}`} style={{ color: x.done ? T.faint : T.text }}>{x.text}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {isTask && (
+          <button onClick={() => onToggleTask(t.id)}
+            className="w-full rounded-xl py-3 mt-4 font-semibold text-white text-sm"
+            style={{ background: t.done ? T.dim : T.ok }}>
+            {t.done ? "Mark as not done" : "Mark as done"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ---------- year grid (analogue-calendar overview) ---------- */
 function YearGrid({ anchor, now, onPickMonth }) {
   const T = useT();
@@ -1455,29 +1566,6 @@ export default function Planner() {
     setTasks((ts) => [...ts, { id: uid(), title: quickTitle.trim(), duration: 60, deadline: null, priority: 2, category: categories[0]?.id, done: false, createdAt: Date.now(), scheduledAt: null, autoReschedule: true, completedSlot: null }]);
     setQuickTitle("");
   };
-  const recoverBackup = () => {
-    let raw = null;
-    try { raw = localStorage.getItem(BACKUP_KEY); } catch { /* private mode */ }
-    if (!raw) { alert("No backup found on this device."); return; }
-    try {
-      const m = migrate(JSON.parse(raw));
-      const mergeById = (cur, extra) => {
-        const seen = new Set(cur.map((x) => x.id));
-        return [...cur, ...extra.filter((x) => x.id && !seen.has(x.id))];
-      };
-      const addT = m.tasks.filter((x) => !tasks.some((c) => c.id === x.id)).length;
-      const addE = m.events.filter((x) => !events.some((c) => c.id === x.id)).length;
-      const addW = m.waiting.filter((x) => !waiting.some((c) => c.id === x.id)).length;
-      setTasks((c) => mergeById(c, m.tasks));
-      setEvents((c) => mergeById(c, m.events));
-      setWaiting((c) => mergeById(c, m.waiting));
-      setCategories((c) => mergeById(c, m.categories));
-      alert(addT + addE + addW === 0
-        ? "Backup checked — everything in it is already here."
-        : `Recovered ${addT} task(s), ${addE} event(s), ${addW} waiting item(s). They'll sync on the next change.`);
-    } catch { alert("The backup on this device couldn't be read."); }
-  };
-
   const addWait = () => {
     if (!newWait.trim()) return;
     setWaiting((ws) => [...ws, { id: uid(), title: newWait.trim(), done: false, createdAt: Date.now() }]);
@@ -1493,12 +1581,32 @@ export default function Planner() {
   const deleteSeries = (id) => { setEvents((es) => es.filter((e) => e.id !== id)); setItemDraft(null); };
   const deleteOccurrence = (id, occDate) => { setEvents((es) => es.map((e) => (e.id === id ? { ...e, exceptions: [...(e.exceptions || []), occDate] } : e))); setItemDraft(null); };
 
+  const [detail, setDetail] = useState(null);
+  const [detailClosing, setDetailClosing] = useState(false);
+  const closeDetail = useCallback(() => {
+    setDetailClosing(true);
+    setTimeout(() => { setDetail(null); setDetailClosing(false); }, 200);
+  }, []);
+
   const openEvent = useCallback((occ) => {
     if (dragRef.current?.moved) return;
+    if (isMobile) {
+      /* full-screen info panel; holidays included (read-only there) */
+      setDetail({ type: "event", id: occ.ev.id, occDate: occ.occDate, start: occ.dispStart ?? occ.ev.start, end: occ.dispEnd ?? occ.ev.end, allDay: !!occ.allDay });
+      return;
+    }
     if (occ.ev.holiday) return; /* holidays are read-only */
     setItemDraft({ ...occ.ev, itemType: occ.ev.timeOff ? "timeoff" : "event", occDate: occ.occDate });
-  }, []);
-  const openTask = useCallback((t) => { if (!dragRef.current?.moved) setItemDraft({ ...t, itemType: "task" }); }, []);
+  }, [isMobile]);
+  const openTask = useCallback((t) => {
+    if (dragRef.current?.moved) return;
+    if (isMobile) { setDetail({ type: "task", id: t.id }); return; }
+    setItemDraft({ ...t, itemType: "task" });
+  }, [isMobile]);
+
+  /* write-through checklist toggles for the detail panel */
+  const toggleEvCheck = useCallback((evId, cid) => setEvents((es) => es.map((e) => (e.id === evId ? { ...e, checklist: (e.checklist || []).map((c) => (c.id === cid ? { ...c, done: !c.done } : c)) } : e))), []);
+  const toggleTaskCheck = useCallback((tId, cid) => setTasks((ts) => ts.map((t) => (t.id === tId ? { ...t, checklist: (t.checklist || []).map((c) => (c.id === cid ? { ...c, done: !c.done } : c)) } : t))), []);
   const openMaps = useCallback((loc) => window.open(`https://www.google.com/maps/search/?api=1&query=${loc.lat},${loc.lon}`, "_blank"), []);
 
   /* view switch with a short cross-fade/scale */
@@ -1933,7 +2041,7 @@ export default function Planner() {
 
   return (
     <ThemeCtx.Provider value={T}>
-      <style>{`.rl-hover:hover{background:${T.hover}} button{cursor:pointer} button:disabled{cursor:not-allowed} select,input[type=date]{cursor:pointer} a{cursor:pointer} html{color-scheme:${mode}} ::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-thumb{background:${T.mode === "dark" ? "#3a3a3e" : "#c9c9ce"};border-radius:5px;border:2px solid ${T.surface}} ::-webkit-scrollbar-track{background:transparent} @keyframes rlFade{0%{opacity:0;transform:scale(0.985)}100%{opacity:1;transform:scale(1)}} .rl-fade{animation:rlFade 0.26s cubic-bezier(0.22,0.61,0.36,1)} @keyframes rlSlideL{0%{opacity:0.5;transform:translateX(26px)}100%{opacity:1;transform:none}} @keyframes rlSlideR{0%{opacity:0.5;transform:translateX(-26px)}100%{opacity:1;transform:none}} .rl-slide-l{animation:rlSlideL 0.22s ease-out} .rl-slide-r{animation:rlSlideR 0.22s ease-out} @media (prefers-reduced-motion: reduce){.rl-slide-l,.rl-slide-r{animation:none}} @media (max-width:640px){input,select,textarea{font-size:16px !important}} @keyframes rlSheet{0%{transform:translateY(48px);opacity:0.55}100%{transform:none;opacity:1}} .rl-sheet{animation:rlSheet 0.24s cubic-bezier(0.22,0.61,0.36,1)} @keyframes rlDrawerIn{0%{transform:translateX(-100%)}100%{transform:none}} @keyframes rlDrawerOut{0%{transform:none}100%{transform:translateX(-100%)}} .rl-drawer-in{animation:rlDrawerIn 0.22s cubic-bezier(0.22,0.61,0.36,1)} .rl-drawer-out{animation:rlDrawerOut 0.19s ease-in forwards} @keyframes rlFadeBg{0%{opacity:0}100%{opacity:1}} .rl-fadebg{animation:rlFadeBg 0.22s ease-out} .rl-fadebg-out{animation:rlFadeBg 0.19s ease-in reverse forwards} @media (prefers-reduced-motion: reduce){.rl-sheet{animation:none}} *{-webkit-touch-callout:none} input,textarea{-webkit-user-select:text;user-select:text} @media (prefers-reduced-motion: reduce){.rl-fade{animation:none}}`}</style>
+      <style>{`.rl-hover:hover{background:${T.hover}} button{cursor:pointer} button:disabled{cursor:not-allowed} select,input[type=date]{cursor:pointer} a{cursor:pointer} html{color-scheme:${mode}} ::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-thumb{background:${T.mode === "dark" ? "#3a3a3e" : "#c9c9ce"};border-radius:5px;border:2px solid ${T.surface}} ::-webkit-scrollbar-track{background:transparent} @keyframes rlFade{0%{opacity:0;transform:scale(0.985)}100%{opacity:1;transform:scale(1)}} .rl-fade{animation:rlFade 0.26s cubic-bezier(0.22,0.61,0.36,1)} @keyframes rlSlideL{0%{opacity:0.5;transform:translateX(26px)}100%{opacity:1;transform:none}} @keyframes rlSlideR{0%{opacity:0.5;transform:translateX(-26px)}100%{opacity:1;transform:none}} .rl-slide-l{animation:rlSlideL 0.22s ease-out} .rl-slide-r{animation:rlSlideR 0.22s ease-out} @media (prefers-reduced-motion: reduce){.rl-slide-l,.rl-slide-r{animation:none}} @media (max-width:640px){input,select,textarea{font-size:16px !important}} @keyframes rlSheet{0%{transform:translateY(48px);opacity:0.55}100%{transform:none;opacity:1}} .rl-sheet{animation:rlSheet 0.24s cubic-bezier(0.22,0.61,0.36,1)} @keyframes rlDetailIn{0%{transform:translateX(100%)}100%{transform:none}} @keyframes rlDetailOut{0%{transform:none}100%{transform:translateX(100%)}} .rl-detail-in{animation:rlDetailIn 0.22s cubic-bezier(0.22,0.61,0.36,1)} .rl-detail-out{animation:rlDetailOut 0.19s ease-in forwards} @keyframes rlDrawerIn{0%{transform:translateX(-100%)}100%{transform:none}} @keyframes rlDrawerOut{0%{transform:none}100%{transform:translateX(-100%)}} .rl-drawer-in{animation:rlDrawerIn 0.22s cubic-bezier(0.22,0.61,0.36,1)} .rl-drawer-out{animation:rlDrawerOut 0.19s ease-in forwards} @keyframes rlFadeBg{0%{opacity:0}100%{opacity:1}} .rl-fadebg{animation:rlFadeBg 0.22s ease-out} .rl-fadebg-out{animation:rlFadeBg 0.19s ease-in reverse forwards} @media (prefers-reduced-motion: reduce){.rl-sheet{animation:none}} *{-webkit-touch-callout:none} input,textarea{-webkit-user-select:text;user-select:text} @media (prefers-reduced-motion: reduce){.rl-fade{animation:none}}`}</style>
       <div className="app-h flex select-none" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", background: T.bg, color: T.text, colorScheme: mode, paddingTop: "env(safe-area-inset-top)" }}>
         {/* ---------- sidebar (drawer on mobile) ---------- */}
         {isMobile && drawerOpen && <div className={`fixed inset-0 z-30 ${drawerClosing ? "rl-fadebg-out" : "rl-fadebg"}`} style={{ background: "rgba(0,0,0,0.45)" }} onClick={closeDrawer} />}
@@ -2029,9 +2137,6 @@ export default function Planner() {
             <SettingsRow icon={<Icon name="sliders" size={15} />} label="Hours & categories" onClick={() => setShowCats(true)} />
             <SettingsRow icon={<Icon name="flag" size={15} />} label="Holiday calendars" right={holidayCals.length ? String(holidayCals.length) : "›"} onClick={() => setShowHolidays(true)} />
             {isMobile && <SettingsRow icon={<Icon name={mode === "dark" ? "sun" : "moon"} size={15} />} label={mode === "dark" ? "Light mode" : "Dark mode"} onClick={() => setMode(mode === "dark" ? "light" : "dark")} />}
-            {(() => { try { return !!localStorage.getItem(BACKUP_KEY); } catch { return false; } })() && (
-              <SettingsRow icon={<Icon name="clock" size={15} />} label="Recover older data on this device" right="restore" onClick={recoverBackup} />
-            )}
             {user ? (
               <SettingsRow icon={<Icon name="user" size={15} />} label={user.email} right="Sign out" danger onClick={doLogout} />
             ) : (
@@ -2100,6 +2205,20 @@ export default function Planner() {
             onClose={() => setItemDraft(null)} />
         )}
         {showCats && <CategoriesModal categories={categories} onSave={(cs) => { setCategories(cs); setShowCats(false); }} onClose={() => setShowCats(false)} />}
+        {detail && (
+          <DetailPanel detail={detail} closing={detailClosing} tasks={tasks} events={events} categories={categories}
+            schedule={schedule} waiting={waiting} onBack={closeDetail}
+            onEdit={() => {
+              if (detail.type === "task") {
+                const t = tasks.find((x) => x.id === detail.id);
+                if (t) setItemDraft({ ...t, itemType: "task" });
+              } else {
+                const ev = events.find((x) => x.id === detail.id);
+                if (ev) setItemDraft({ ...ev, itemType: ev.timeOff ? "timeoff" : "event", occDate: detail.occDate });
+              }
+            }}
+            onToggleTask={toggleTask} onToggleEvCheck={toggleEvCheck} onToggleTaskCheck={toggleTaskCheck} openMaps={openMaps} />
+        )}
         {showStats && <StatsModal tasks={tasks} events={events} categories={categories} onClose={() => setShowStats(false)} />}
         {showHolidays && <HolidaysModal selected={holidayCals} country={country} onSave={(sel, c) => { setHolidayCals(sel); setCountry(c); setShowHolidays(false); }} onClose={() => setShowHolidays(false)} />}
       </div>
