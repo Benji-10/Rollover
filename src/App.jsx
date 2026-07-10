@@ -700,7 +700,10 @@ function blockGeom(lay, hourH, start, end) {
     return { ...base, leftPct: lay.col * gapPct, widthPct: gapPct, split: true };
   }
   /* indent: bodies overlap but shift each column right so borders don't stack */
-  return { ...base, left: 2 + lay.col * 10, right: 4, indent: lay.col };
+  const capH = lay.capMin != null && lay.capMin > start
+    ? ((Math.min(lay.capMin, clippedEnd) - start) / 60) * hourH
+    : null;
+  return { ...base, left: 2 + lay.col * 10, right: 4, indent: lay.col, capH };
 }
 function geomStyle(g) {
   if (g.split) return { top: g.top, height: g.height, left: `calc(${g.leftPct}% + 1px)`, width: `calc(${g.widthPct}% - 3px)` };
@@ -730,8 +733,10 @@ function EventBlock({ occ, lay, hourH, dragPreview, beginDrag, openEvent, openMa
   const g = blockGeom(lay, hourH, start, end);
   const compact = g.height < 34;
   const sug = !!occ.ev.suggestion;
-  /* show at least one full line; never spill more than the block can hold */
-  const clampLines = Math.max(1, Math.floor((g.height - 4) / (compact ? 13.2 : 15)));
+  /* show at least one full line; never spill more than the block can hold,
+     and stop above any overlapping later block (cascade mode) */
+  const usableH = g.capH != null ? Math.min(g.height, g.capH) : g.height;
+  const clampLines = Math.max(1, Math.floor((usableH - 4) / (compact ? 13.2 : 15)));
   return (
     <div className={`absolute rounded-lg select-none group/ev ${sug ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"}`}
       onPointerDown={(e) => beginDrag(e, { type: "event", occ }, "move")}
@@ -764,7 +769,8 @@ function TaskBlock({ item, lay, hourH, dragPreview, beginDrag, openTask, toggleT
   const overdue = !done && ((t.deadline && item.date > t.deadline) || item.overdue);
   const g = blockGeom(lay, hourH, item.start, item.end);
   const compact = g.height < 34;
-  const clampLines = Math.max(1, Math.floor((g.height - 4) / (compact ? 13.2 : 15)));
+  const usableH = g.capH != null ? Math.min(g.height, g.capH) : g.height;
+  const clampLines = Math.max(1, Math.floor((usableH - 4) / (compact ? 13.2 : 15)));
   return (
     <div className={`absolute rounded-lg select-none group/tk ${done ? "" : "cursor-grab active:cursor-grabbing"}`}
       onPointerDown={(e) => { if (!done) beginDrag(e, { type: "task", item }, "move"); }}
@@ -1787,7 +1793,8 @@ export default function Planner() {
   const layoutFor = useCallback((key) => {
     const evs = (timedByDay[key] || []).map((occ) => ({ id: "e_" + occ.renderKey, start: occ.dispStart, end: Math.min(occ.dispEnd, 1440), ref: occ, kind: "event" }));
     const tks = (tasksByDay[key] || []).map((it) => ({ id: "t_" + it.task.id, start: it.start, end: Math.min(it.end, 1440), ref: it, kind: "task" }));
-    const clearance = Math.max(8, Math.round((26 / hourH) * 60));
+    /* gap under two line-heights -> side-by-side; over -> cascade with capped text */
+    const clearance = Math.max(8, Math.round((30 / hourH) * 60));
     const laid = layoutDay([...evs, ...tks], clearance);
     const byId = {};
     for (const l of laid) byId[l.item.id] = l;

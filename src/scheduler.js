@@ -264,11 +264,21 @@ export function layoutDay(items, clearanceMin = 30) {
     }
     for (let i = 0; i < cluster.length; i++) {
       const it = cluster[i];
+      /* cascade mode: a later-starting overlapper covers this block's lower
+         part — report where, so the block can stop its text above it */
+      let capMin = null;
+      if (nCols > 1 && !tight) {
+        for (const o of cluster) {
+          if (o === it) continue;
+          if (o.start > it.start && o.start < it.end) capMin = capMin == null ? o.start : Math.min(capMin, o.start);
+        }
+      }
       out.push({
         item: it,
         col: it._col,
         cols: nCols,
         mode: nCols <= 1 ? "full" : tight ? "split" : "indent",
+        capMin,
         z: 2 + i,
       });
     }
