@@ -1579,7 +1579,7 @@ export default function Planner() {
       id: uid(), title: p.title, date: tl.date, endDate: p.endDate || null,
       allDay: !!p.allDay, start: p.allDay ? 0 : tl.start, end: p.allDay ? 1440 : tl.end,
       tz: deviceTz, color: "blue", repeat: "none", repeatUntil: null, exceptions: [],
-      location: null, timeOff: false, calId: null,
+      location: null, timeOff: false, calId: null, srcSugId: row.id,
       notes: [p.venue, p.details, row.subject ? `From: ${row.subject}` : ""].filter(Boolean).join("\n"),
       checklist: [],
     }]);
@@ -1742,9 +1742,17 @@ export default function Planner() {
     [events, disabledCals]
   );
 
+  /* a suggestion accepted on any device becomes an event carrying its id;
+     once that event arrives with the blob pull, the local copy of the
+     suggestion is spent — hide it without waiting for the next email poll */
+  const pendingSuggestions = useMemo(() => {
+    const realised = new Set(events.map((e) => e.srcSugId).filter((x) => x != null));
+    return (emailInbox?.suggestions || []).filter((r) => !realised.has(r.id));
+  }, [events, emailInbox]);
+
   /* pending email suggestions as preliminary blocks — render-only, never
      scheduled around, tap to confirm */
-  const suggestionEvents = useMemo(() => (emailInbox?.suggestions || []).map((row) => {
+  const suggestionEvents = useMemo(() => pendingSuggestions.map((row) => {
     const p = row.payload;
     const tl = sugLocal(p);
     return {
@@ -1753,7 +1761,7 @@ export default function Planner() {
       tz: deviceTz, repeat: "none", repeatUntil: null, exceptions: [], location: null,
       color: "gray", suggestion: true, sugId: row.id, notes: "", checklist: [],
     };
-  }), [emailInbox]);
+  }), [pendingSuggestions]);
 
   const occurrences = useMemo(() => {
     const evOcc = expandOccurrences(visibleEvents, range.start, range.end, deviceTz);
@@ -1857,7 +1865,7 @@ export default function Planner() {
   const openEvent = useCallback((occ) => {
     if (dragRef.current?.moved) return;
     if (occ.ev.suggestion) {
-      const row = (emailInbox?.suggestions || []).find((r) => r.id === occ.ev.sugId);
+      const row = pendingSuggestions.find((r) => r.id === occ.ev.sugId);
       if (row) setConfirmSug(row);
       return;
     }
@@ -1870,7 +1878,7 @@ export default function Planner() {
     }
     if (occ.ev.holiday || occ.ev.icsCal) return; /* read-only */
     setItemDraft({ ...occ.ev, itemType: occ.ev.timeOff ? "timeoff" : "event", occDate: occ.occDate });
-  }, [isMobile, emailInbox]);
+  }, [isMobile, pendingSuggestions]);
   const openTask = useCallback((t) => {
     if (dragRef.current?.moved) return;
     if (isMobile) { setDetail({ type: "task", id: t.id }); return; }
@@ -2412,13 +2420,13 @@ export default function Planner() {
                 </div>
               );
             })}
-            {emailInbox && emailInbox.suggestions && emailInbox.suggestions.length > 0 && (
+            {pendingSuggestions.length > 0 && (
               <>
                 <div className="flex items-center gap-1.5 px-2 mt-3 mb-1">
                   <Icon name="mail" size={11} color={T.dim} />
                   <span className="text-[10px] uppercase tracking-wide flex-1" style={{ color: T.dim }}>From email</span>
                 </div>
-                {emailInbox.suggestions.map((row) => {
+                {pendingSuggestions.map((row) => {
                   const p = row.payload;
                   const tl = sugLocal(p);
                   return (
