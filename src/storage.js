@@ -30,6 +30,25 @@ export function initIdentity(onChange, onWidgetToggle) {
 }
 export const openLogin = () => netlifyIdentity.open();
 export const closeLogin = () => netlifyIdentity.close();
+
+/* email-to-event suggestions */
+export async function fetchEmailInbox(user) {
+  if (!user) return null;
+  const auth = await bearer();
+  const r = await fetchT("/.netlify/functions/email", { headers: { Authorization: auth } });
+  if (!r.ok) throw new Error(`email inbox failed (${r.status})`);
+  return r.json();
+}
+export async function actOnSuggestion(user, id, action) {
+  if (!user) return;
+  const auth = await bearer();
+  const r = await fetchT("/.netlify/functions/email", {
+    method: "PUT",
+    headers: { Authorization: auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ id, action }),
+  });
+  if (!r.ok) throw new Error(`suggestion update failed (${r.status})`);
+}
 export const doLogout = () => netlifyIdentity.logout();
 
 /* Mobile networks stall silently; a request with no deadline means the UI

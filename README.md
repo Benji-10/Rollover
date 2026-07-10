@@ -192,3 +192,28 @@ destructive rewrite. To inspect or roll back, from the app's console:
   await fetch('/.netlify/functions/data', { method: 'PUT', headers: { Authorization: 'Bearer ' + jwt, 'Content-Type': 'application/json' }, body: JSON.stringify({ restore: ID }) });
 
 Then reload; the periodic pull picks the restored blob up everywhere.
+
+## Email import (suggested events)
+Forward booking emails (or auto-forward from airline/booking senders) to a
+private per-user address; the app parses them into suggestions that appear
+in the sidebar with Add/✕. Parsing uses the schema.org JSON-LD that
+airlines/hotels/restaurants embed (FlightReservation, LodgingReservation,
+TrainReservation, FoodEstablishmentReservation, EventReservation) — the same
+data Gmail uses — with a date/time heuristic fallback for plain emails.
+
+One-time server setup (~5 min):
+1. Create a free inbound-email account (CloudMailin or Postmark inbound).
+   You get an address like abc123@cloudmailin.net.
+2. Point its webhook/target at:
+   https://YOURSITE.netlify.app/.netlify/functions/email?secret=YOURSECRET
+   (choose JSON format if the provider asks; both CloudMailin's JSON and
+   Postmark's inbound JSON are understood.)
+3. Netlify env vars: INBOUND_ADDRESS = abc123@cloudmailin.net,
+   INBOUND_SECRET = YOURSECRET. Redeploy.
+4. In the app: sidebar -> Email import shows your personal forwarding
+   address (the base address with +token). Only mail sent to that exact
+   address is read; unknown tokens are dropped.
+
+Suggestions poll on load/focus and every 5 minutes. Accepting creates a
+normal editable event (venue/reference go into its notes); timed
+suggestions use the clock time written in the email.

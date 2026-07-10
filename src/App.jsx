@@ -8,7 +8,7 @@ import {
 } from "./time.js";
 import { expandOccurrences, scheduleTasks, windowFor, layoutDay, effectivePriority } from "./scheduler.js";
 import { parseICS } from "./ics.js";
-import { initIdentity, openLogin, doLogout, loadData, saveData, STORE_KEY } from "./storage.js";
+import { initIdentity, openLogin, doLogout, loadData, saveData, fetchEmailInbox, actOnSuggestion, STORE_KEY } from "./storage.js";
 import { HOLIDAY_CALENDARS, calByCode, guessCountry, holidayFeedUrl } from "./holidays.js";
 
 const HOUR_H_BASE = 48;
@@ -32,6 +32,7 @@ const ICONS = {
   menu: <><line x1="4" y1="6.5" x2="20" y2="6.5" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="17.5" x2="20" y2="17.5" /></>,
   umbrella: <><path d="M12 3a8.5 8.5 0 0 1 8.5 8.5H3.5A8.5 8.5 0 0 1 12 3z" /><path d="M12 11.5V18a2 2 0 0 0 4 0" /></>,
   chevL: <path d="M14.5 5.5L8 12l6.5 6.5" />,
+  mail: <><rect x="3" y="5.5" width="18" height="13" rx="2.5" /><path d="M3.5 7l8.5 6 8.5-6" /></>,
 };
 function Icon({ name, size = 16, color = "currentColor", sw = 1.8, style }) {
   return (
@@ -1352,6 +1353,8 @@ export default function Planner() {
   const [showCats, setShowCats] = useState(false);
   const [showHolidays, setShowHolidays] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [showEmail, setShowEmail] = useState(false);
+  const [emailInbox, setEmailInbox] = useState(null); /* {address?|unconfigured, suggestions:[]} */
   const [quickTitle, setQuickTitle] = useState("");
   const [newWait, setNewWait] = useState("");
   const [saveState, setSaveState] = useState("idle");
@@ -1507,6 +1510,42 @@ export default function Planner() {
       window.removeEventListener("online", onWake);
     };
   }, [user, loaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* email suggestions: light poll — load, focus, every 5 minutes */
+  useEffect(() => {
+    if (!user || !loaded) return;
+    let dead = false;
+    const pull = async () => {
+      if (document.hidden) return;
+      try {
+        const j = await fetchEmailInbox(user);
+        if (!dead && j) setEmailInbox(j);
+      } catch { /* transient */ }
+    };
+    pull();
+    const iv = setInterval(pull, 5 * 60e3);
+    const onWake = () => { if (!document.hidden) pull(); };
+    window.addEventListener("focus", onWake);
+    return () => { dead = true; clearInterval(iv); window.removeEventListener("focus", onWake); };
+  }, [user, loaded]);
+
+  const acceptSuggestion = async (row) => {
+    const p = row.payload;
+    setEvents((es) => [...es, {
+      id: uid(), title: p.title, date: p.date, endDate: p.endDate || null,
+      allDay: !!p.allDay, start: p.allDay ? 0 : p.start, end: p.allDay ? 1440 : p.end,
+      tz: deviceTz, color: "blue", repeat: "none", repeatUntil: null, exceptions: [],
+      location: null, timeOff: false, calId: null,
+      notes: [p.venue, p.details, row.subject ? `From: ${row.subject}` : ""].filter(Boolean).join("\n"),
+      checklist: [],
+    }]);
+    setEmailInbox((m) => (m ? { ...m, suggestions: m.suggestions.filter((x) => x.id !== row.id) } : m));
+    try { await actOnSuggestion(user, row.id, "accepted"); } catch { /* re-appears next poll; accept is idempotent-ish */ }
+  };
+  const dismissSuggestion = async (row) => {
+    setEmailInbox((m) => (m ? { ...m, suggestions: m.suggestions.filter((x) => x.id !== row.id) } : m));
+    try { await actOnSuggestion(user, row.id, "dismissed"); } catch { /* re-appears next poll */ }
+  };
 
   /* land on the current time; only view changes re-scroll */
   useEffect(() => {
@@ -2254,6 +2293,29 @@ export default function Planner() {
                 </div>
               );
             })}
+            {emailInbox && emailInbox.suggestions && emailInbox.suggestions.length > 0 && (
+              <>
+                <div className="flex items-center gap-1.5 px-2 mt-3 mb-1">
+                  <Icon name="mail" size={11} color={T.dim} />
+                  <span className="text-[10px] uppercase tracking-wide flex-1" style={{ color: T.dim }}>From email</span>
+                </div>
+                {emailInbox.suggestions.map((row) => {
+                  const p = row.payload;
+                  return (
+                    <div key={row.id} className="mx-2 mb-1.5 rounded-xl px-2.5 py-2" style={{ background: T.surface2 }}>
+                      <div className="text-sm font-medium truncate" style={{ color: T.text }}>{p.title}</div>
+                      <div className="text-[11px] truncate" style={{ color: T.dim }}>
+                        {p.date}{p.endDate ? ` – ${p.endDate}` : ""}{p.allDay ? " · all day" : ` · ${toAmPm(p.start)}`}{p.venue ? ` · ${p.venue}` : ""}
+                      </div>
+                      <div className="flex gap-1.5 mt-1.5">
+                        <button onClick={() => acceptSuggestion(row)} className="flex-1 rounded-lg py-1 text-xs font-semibold text-white" style={{ background: T.ok }}>Add</button>
+                        <button onClick={() => dismissSuggestion(row)} className="rounded-lg px-2.5 py-1 text-xs font-medium" style={{ background: T.surface, color: T.dim }}>✕</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
             <div className="flex items-center gap-1.5 px-2 mt-3 mb-1">
               <Icon name="clock" size={11} color={T.dim} />
               <span className="text-[10px] uppercase tracking-wide flex-1" style={{ color: T.dim }}>Waiting on</span>
@@ -2299,6 +2361,9 @@ export default function Planner() {
             <SettingsRow icon={<Icon name="sliders" size={15} />} label="Hours & categories" onClick={() => setShowCats(true)} />
             <SettingsRow icon={<Icon name="flag" size={15} />} label="Calendars" right="›" onClick={() => setShowHolidays(true)} />
             {isMobile && <SettingsRow icon={<Icon name={mode === "dark" ? "sun" : "moon"} size={15} />} label={mode === "dark" ? "Light mode" : "Dark mode"} onClick={() => setMode(mode === "dark" ? "light" : "dark")} />}
+            {user && (
+              <SettingsRow icon={<Icon name="mail" size={15} />} label="Email import" right={emailInbox?.unconfigured ? "setup" : "›"} onClick={() => setShowEmail(true)} />
+            )}
             {user ? (
               <SettingsRow icon={<Icon name="user" size={15} />} label={user.email} right="Sign out" danger onClick={doLogout} />
             ) : (
@@ -2385,6 +2450,26 @@ export default function Planner() {
               }
             }}
             onToggleTask={toggleTask} onToggleEvCheck={toggleEvCheck} onToggleTaskCheck={toggleTaskCheck} openMaps={openMaps} />
+        )}
+        {showEmail && (
+          <Modal title="Email import" onClose={() => setShowEmail(false)}>
+            {emailInbox?.address ? (
+              <>
+                <p className="text-xs mb-2" style={{ color: T.dim }}>
+                  Forward booking confirmations — flights, hotels, reservations, appointments — to your private address and they'll appear as suggestions. An auto-forward filter for your usual senders works too.
+                </p>
+                <button className="w-full rounded-xl px-3 py-2.5 text-sm font-mono break-all text-left" style={{ background: T.surface2, color: T.text }}
+                  onClick={() => { try { navigator.clipboard.writeText(emailInbox.address); } catch { /* clipboard unavailable */ } }}>
+                  {emailInbox.address}
+                </button>
+                <p className="text-[10px] mt-1.5" style={{ color: T.faint }}>Tap to copy. Only emails sent to this exact address are read.</p>
+              </>
+            ) : (
+              <p className="text-xs" style={{ color: T.dim }}>
+                Not configured on the server yet: this needs an inbound-email provider pointing at the email function, plus INBOUND_ADDRESS and INBOUND_SECRET environment variables — see the README for the five-minute setup.
+              </p>
+            )}
+          </Modal>
         )}
         {showStats && <StatsModal tasks={tasks} events={events} categories={categories} onClose={() => setShowStats(false)} />}
         {showHolidays && <HolidaysModal icsCals={icsCals} onAddIcs={addIcsCal} onToggleIcs={toggleIcsCal} onRemoveIcs={removeIcsCal} icsCache={icsCache}
