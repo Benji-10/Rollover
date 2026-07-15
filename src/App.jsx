@@ -618,6 +618,63 @@ function ItemModal({ draft, events, tasks = [], waiting = [], userCals = [], cat
 }
 
 /* ---------- categories / hours editor ---------- */
+function HistoryPanel({ clearDirty }) {
+  const T = useT();
+  const [rows, setRows] = useState(null);
+  const [confirmId, setConfirmId] = useState(null);
+  const [msg, setMsg] = useState("");
+  const load = async () => {
+    setMsg("loading…");
+    try {
+      const auth = await getAuthHeader();
+      const r = await fetch("/.netlify/functions/data?history=1", { headers: { Authorization: auth } });
+      const j = await r.json();
+      setRows(j.history || []);
+      setMsg("");
+    } catch (err) { setMsg(String(err?.message || err)); }
+  };
+  const restore = async (id) => {
+    setMsg("restoring…");
+    try {
+      const auth = await getAuthHeader();
+      const r = await fetch("/.netlify/functions/data", { method: "PUT", headers: { Authorization: auth, "Content-Type": "application/json" }, body: JSON.stringify({ restore: id }) });
+      if (!r.ok) throw new Error(`restore failed (${r.status})`);
+      /* the restored blob is now the truth — a lingering dirty flag would
+         merge stale local state right back over it */
+      clearDirty();
+      try { localStorage.removeItem(STORE_KEY); } catch { /* reload refetches */ }
+      location.reload();
+    } catch (err) { setMsg(String(err?.message || err)); }
+  };
+  return (
+    <div className="rounded-xl px-3 py-2" style={{ background: T.surface2 }}>
+      {!rows ? (
+        <button onClick={load} className="text-[11px] font-medium" style={{ color: T.accent }}>{msg || "View server backups"}</button>
+      ) : rows.length === 0 ? (
+        <p className="text-[11px]" style={{ color: T.dim }}>No snapshots yet — one is kept before every change (last 20).</p>
+      ) : (
+        <>
+          <p className="text-[10px] mb-1.5" style={{ color: T.faint }}>A snapshot is kept before every change. Restoring reloads the app.</p>
+          {rows.map((r) => (
+            <div key={r.id} className="flex items-center gap-2 py-1" style={{ borderTop: `1px solid ${T.border}` }}>
+              <div className="flex-1 min-w-0">
+                <div className="text-[11px]" style={{ color: T.text }}>{new Date(r.saved_at).toLocaleString()}</div>
+                <div className="text-[10px]" style={{ color: T.dim }}>{r.tasks} tasks · {r.events} events</div>
+              </div>
+              {confirmId === r.id ? (
+                <button onClick={() => restore(r.id)} className="rounded-lg px-2 py-1 text-[11px] font-semibold text-white" style={{ background: T.danger }}>Confirm</button>
+              ) : (
+                <button onClick={() => setConfirmId(r.id)} className="rounded-lg px-2 py-1 text-[11px] font-medium" style={{ background: T.surface, color: T.accent }}>Restore</button>
+              )}
+            </div>
+          ))}
+          {msg && <p className="text-[10px] mt-1" style={{ color: T.danger }}>{msg}</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
 function NotifDiagnostics() {
   const T = useT();
   const [st, setSt] = useState(null);
@@ -760,6 +817,25 @@ function blockGeom(lay, hourH, start, end) {
 function geomStyle(g) {
   if (g.split) return { top: g.top, height: g.height, left: `calc(${g.leftPct}% + 1px)`, width: `calc(${g.widthPct}% - 3px)` };
   return { top: g.top, height: g.height, left: g.left, right: g.right };
+}
+
+/* Reconciling offline edits with the server. NEVER overwrite wholesale — a
+   stale mirror plus one offline tap used to clobber newer work from other
+   devices. Union by id: local wins per item, remote-only items survive.
+   Known tradeoff: a deletion made offline can resurrect if the item still
+   exists remotely — a recoverable annoyance, unlike data loss. */
+function mergeBlobs(remote, local) {
+  const byId = (arr) => { const m = new Map(); for (const x of arr || []) if (x && x.id != null) m.set(x.id, x); return m; };
+  const union = (r, l) => { const m = byId(r); for (const [id, x] of byId(l)) m.set(id, x); return [...m.values()]; };
+  return {
+    ...remote, ...local,
+    tasks: union(remote.tasks, local.tasks),
+    events: union(remote.events, local.events),
+    waiting: union(remote.waiting, local.waiting),
+    icsCals: union(remote.icsCals, local.icsCals),
+    userCals: union(remote.userCals, local.userCals),
+    categories: local.categories && local.categories.length ? local.categories : remote.categories,
+  };
 }
 
 /* suggestion payload times -> this device's wall clock when the email
@@ -1704,12 +1780,20 @@ function Planner() {
         const d = await loadData(user);
         markServerOk(true);
         if (localStorage.getItem(DIRTY_KEY)) {
-          /* this device has offline edits — they win; server history keeps
-             a snapshot of whatever they replace */
           try {
-            await saveData(user, migrate(dataRef.current));
+            const local = migrate(dataRef.current);
+            const merged = d ? mergeBlobs(migrate(d), local) : local;
+            await saveData(user, merged);
             lastPushRef.current = Date.now();
             clearDirty();
+            /* adopt the merge here too (unless the user edited mid-flight —
+               those edits re-dirty and the next tick re-merges) */
+            if (editSeqRef.current === seqAtStart && d) {
+              const m = migrate(merged);
+              skipNextSave.current = true;
+              setTasks(m.tasks); setEvents(m.events); setCategories(m.categories); setWaiting(m.waiting);
+              setHolidayCals(m.holidayCals); setHolidayCache(m.holidayCache); setCountry(m.country); setIcsCals(m.icsCals); setUserCals(m.userCals); setDefaultCat(m.defaultCat);
+            }
           } catch { /* still offline-ish — next tick retries */ }
           busy = false; return;
         }
@@ -1777,12 +1861,35 @@ function Planner() {
 
   /* ---------- push notifications ---------- */
   const notifSupported = typeof window !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  const decodeVapid = (k) => {
+    const b64 = k.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+    return Uint8Array.from(atob(b64 + pad), (c) => c.charCodeAt(0));
+  };
   useEffect(() => {
     if (!notifSupported) { setNotifState("unsupported"); return; }
     (async () => {
       try {
         const reg = await navigator.serviceWorker.getRegistration("/sw.js");
-        const sub = reg && (await reg.pushManager.getSubscription());
+        let sub = reg && (await reg.pushManager.getSubscription());
+        if (sub && Notification.permission === "granted") {
+          /* self-heal on every open: a subscription built under a different
+             (or whitespace-corrupted) server key 403s forever — rebuild it */
+          try {
+            const kj = await (await fetch("/.netlify/functions/notify")).json();
+            if (kj.publicKey) {
+              const key = decodeVapid(kj.publicKey);
+              const cur = sub.options?.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
+              const same = cur && cur.length === key.length && cur.every((b, i) => b === key[i]);
+              if (!same) {
+                await sub.unsubscribe();
+                sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+                const auth = await getAuthHeader();
+                if (auth) await fetch("/.netlify/functions/notify", { method: "POST", headers: { Authorization: auth, "Content-Type": "application/json" }, body: JSON.stringify({ sub: sub.toJSON() }) });
+              }
+            }
+          } catch { /* offline — heal next open */ }
+        }
         setNotifState(sub && Notification.permission === "granted" ? "on" : Notification.permission === "denied" ? "denied" : "off");
       } catch { setNotifState("off"); }
     })();
@@ -1797,9 +1904,7 @@ function Planner() {
       const kr = await fetch("/.netlify/functions/notify");
       const kj = await kr.json();
       if (!kj.publicKey) { setNotifState("error:server VAPID keys not configured — see README"); return; }
-      const b64 = kj.publicKey.replace(/-/g, "+").replace(/_/g, "/");
-      const pad = "=".repeat((4 - (b64.length % 4)) % 4);
-      const key = Uint8Array.from(atob(b64 + pad), (c) => c.charCodeAt(0));
+      const key = decodeVapid(kj.publicKey);
       /* a subscription made under an old/different key pair makes every send
          403 — detect and re-subscribe rather than reusing it */
       const existing = await reg.pushManager.getSubscription();
@@ -2962,6 +3067,12 @@ function Planner() {
               </div>
             )}
             {notifState === "on" && <NotifDiagnostics />}
+            {user && (
+              <>
+                <div className="text-[10px] uppercase tracking-wide mt-4 mb-1.5" style={{ color: T.dim }}>Data history</div>
+                <HistoryPanel clearDirty={clearDirty} />
+              </>
+            )}
             {!user && notifState !== "unsupported" && <p className="text-[10px] mt-1.5" style={{ color: T.faint }}>Notifications need a signed-in account (the server sends them).</p>}
           </Modal>
         )}

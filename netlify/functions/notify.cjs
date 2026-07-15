@@ -47,8 +47,10 @@ const json = (code, obj) => ({ statusCode: code, headers: { "Content-Type": "app
 exports.handler = async (event, context) => {
   try {
     if (event.httpMethod === "GET" && !(event.queryStringParameters && event.queryStringParameters.status)) {
-      if (!process.env.VAPID_PUBLIC_KEY) return json(200, { unconfigured: true });
-      return json(200, { publicKey: process.env.VAPID_PUBLIC_KEY });
+      const v0 = vapid();
+      if (!v0.pub) return json(200, { unconfigured: true });
+      /* trimmed — a pasted trailing newline here corrupted subscriptions into permanent 403s */
+      return json(200, { publicKey: v0.pub });
     }
     if (!process.env.DATABASE_URL) return json(500, { error: "DATABASE_URL not configured" });
     const user = context.clientContext && context.clientContext.user;
