@@ -195,7 +195,7 @@ const inputStyle = (T) => ({ background: T.input, color: T.text, border: "1px so
 const selStyle = (T) => ({ background: T.surface2, color: T.text, border: `1px solid ${T.border}` });
 
 /* ---------- unified event / task editor ---------- */
-function ItemModal({ draft, events, tasks = [], waiting = [], userCals = [], categories, onSaveEvent, onSaveTask, onDeleteSeries, onDeleteOccurrence, onDeleteTask, onClose }) {
+function ItemModal({ draft, events, tasks = [], waiting = [], userCals = [], categories, defaultCat, onSaveEvent, onSaveTask, onDeleteSeries, onDeleteOccurrence, onDeleteTask, onClose }) {
   const T = useT();
   const isNew = !draft.id;
   const [itemType, setItemType] = useState(draft.itemType || "event");
@@ -223,7 +223,12 @@ function ItemModal({ draft, events, tasks = [], waiting = [], userCals = [], cat
   /* task fields */
   const [duration, setDuration] = useState(draft.duration || (draft.end != null && draft.start != null ? Math.max(15, draft.end - draft.start) : 60));
   const [priority, setPriority] = useState(draft.priority || 2);
-  const [category, setCategory] = useState(draft.category || categories[0]?.id);
+  /* new task: honor the configured default; editing keeps the task's own */
+  const [category, setCategory] = useState(() => {
+    if (draft.category) return draft.category;      /* editing, or explicitly seeded */
+    if (draft.id) return null;                      /* editing a task with no category */
+    return defaultCat || categories[0]?.id;         /* brand-new task: configured default */
+  });
   const [deadline, setDeadline] = useState(draft.deadline || "");
   const [pickTime, setPickTime] = useState(!!draft.scheduledAt || (isNew && draft.start != null && draft.fromGrid));
   const [taskDate, setTaskDate] = useState(draft.scheduledAt?.date || draft.date || dateKey(new Date()));
@@ -3037,7 +3042,7 @@ function Planner() {
         </div>
 
         {itemDraft && (
-          <ItemModal draft={itemDraft} events={events} tasks={tasks} waiting={waiting} userCals={userCals} categories={categories}
+          <ItemModal draft={itemDraft} events={events} tasks={tasks} waiting={waiting} userCals={userCals} categories={categories} defaultCat={defaultCat}
             onSaveEvent={saveEvent} onSaveTask={saveTask}
             onDeleteSeries={deleteSeries} onDeleteOccurrence={deleteOccurrence} onDeleteTask={deleteTask}
             onClose={() => setItemDraft(null)} />

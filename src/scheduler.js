@@ -88,9 +88,12 @@ export function scheduleTasks(tasks, events, categories, now, displayTz, waiting
   const HORIZON = 28;
   const gran = 15;
   const snapUp = (m) => Math.ceil(m / gran) * gran;
-  const todayKey = dateKey(now);
+  /* anchor "now" in the display timezone so day boundaries and the
+     minutes-of-day cutoff agree with how occurrences are laid out */
+  const nowWall = utcToWall(now.getTime(), displayTz);
+  const todayKey = nowWall.date;
   const endKey = addDaysKey(todayKey, HORIZON);
-  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const nowMin = nowWall.minutes;
 
   const busyByDay = {};
   const offDays = new Set();
